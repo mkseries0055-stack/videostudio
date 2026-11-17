@@ -4,8 +4,12 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -17,6 +21,7 @@ import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -25,7 +30,8 @@ import androidx.appcompat.app.AlertDialog
 class PickerScreen(
     private val ctx: Context,
     private val onBack: () -> Unit,
-    private val onNext: (List<VideoItem>) -> Unit
+    private val onNext: (List<VideoItem>) -> Unit,
+    private val onBrowse: () -> Unit
 ) {
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -41,6 +47,7 @@ class PickerScreen(
     private var query = ""
     private var grid = false
     private var sortMode = 0
+    private var extId = 0L
     private var shown: List<VideoItem> = emptyList()
     private var folderNames: List<String> = emptyList()
 
@@ -51,6 +58,7 @@ class PickerScreen(
     private lateinit var tabFolders: TextView
     private lateinit var indMedia: View
     private lateinit var indFolders: View
+    private lateinit var banner: LinearLayout
     private lateinit var videoGrid: GridView
     private lateinit var folderList: ListView
     private lateinit var msg: TextView
@@ -167,6 +175,32 @@ class PickerScreen(
         tabs.addView(c2, lp(0, WRAP, 1f))
         col.addView(tabs)
 
+        // File Browser বাটন
+        banner = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(if (UI.dark) Color.parseColor("#14233F") else Color.parseColor("#EAF1FF"))
+                cornerRadius = d(14).toFloat()
+                setStroke(d(2), UI.blue)
+            }
+            setPadding(d(16), d(8), d(16), d(8))
+            isClickable = true
+            setOnClickListener { onBrowse() }
+        }
+        banner.addView(
+            ImageView(ctx).apply { setImageResource(R.drawable.ic_folder) },
+            lp(d(40), d(40))
+        )
+        banner.addView(TextView(ctx).apply {
+            text = "File Browser"
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(UI.textMain)
+            gravity = Gravity.CENTER
+        }, lp(0, WRAP, 1f))
+        col.addView(banner, lp(MATCH, d(60)).apply { setMargins(d(16), d(8), d(16), d(4)) })
+
         val frame = FrameLayout(ctx)
         videoGrid = GridView(ctx).apply {
             setPadding(d(16), d(8), d(16), d(8))
@@ -248,6 +282,53 @@ class PickerScreen(
         return false
     }
 
+    // Files অ্যাপ থেকে বাছা ভিডিও যোগ করা
+    fun addExternal(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        Thread {
+            val existing = all.map { it.uri }.toSet()
+            val created = ArrayList<VideoItem>()
+            for (u in uris) {
+                if (u in existing) continue
+                var name = "video"
+                var size = 0L
+                try {
+                    ctx.contentResolver.query(u, null, null, null, null)?.use { c ->
+                        val iN = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val iS = c.getColumnIndex(OpenableColumns.SIZE)
+                        if (c.moveToFirst()) {
+                            if (iN >= 0) name = c.getString(iN) ?: name
+                            if (iS >= 0 && !c.isNull(iS)) size = c.getLong(iS)
+                        }
+                    }
+                } catch (_: Throwable) {
+                }
+                var dur = 0L
+                try {
+                    val r = MediaMetadataRetriever()
+                    r.setDataSource(ctx, u)
+                    dur = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLongOrNull() ?: 0L
+                    r.release()
+                } catch (_: Throwable) {
+                }
+                extId -= 1
+                created.add(
+                    VideoItem(extId, u, name, dur, size, "Browsed files", System.currentTimeMillis() / 1000)
+                )
+            }
+            main.post {
+                if (created.isNotEmpty()) {
+                    all = created + all
+                    created.forEach { selected.add(it.id) }
+                }
+                tab = 0
+                openFolder = null
+                refresh()
+            }
+        }.start()
+    }
+
     private fun toggleSearch() {
         val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         val show = searchBox.visibility != View.VISIBLE
@@ -309,6 +390,8 @@ class PickerScreen(
         indFolders.setBackgroundColor(if (tab == 1) UI.blue else Color.TRANSPARENT)
         titleView.text = openFolder ?: "Select files"
         gridBtn.text = if (grid) "☰" else "▦"
+        banner.visibility =
+            if (tab == 0 && openFolder == null && query.isEmpty()) View.VISIBLE else View.GONE
 
         if (loading) {
             msg.text = "লোড হচ্ছে..."
