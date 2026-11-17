@@ -1,5 +1,6 @@
 package com.example.videostudio
 
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -18,6 +19,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var homeView: View
     private lateinit var outView: View
 
+    private var tab = 0
+    private var mode = 0 // 0 = লাইট, 1 = ডার্ক, 2 = অটো
+
+    private fun systemDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun effectiveDark(): Boolean = mode == 1 || (mode == 2 && systemDark())
+
+    private fun setMode(m: Int) {
+        mode = m
+        getSharedPreferences("app", MODE_PRIVATE).edit().putInt("theme", m).apply()
+        buildUi()
+    }
+
     private fun navItem(emoji: String, label: String): TextView = TextView(this).apply {
         text = "$emoji\n$label"
         textSize = 12f
@@ -26,19 +42,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun select(index: Int) {
+        tab = index
         content.removeAllViews()
         content.addView(if (index == 0) homeView else outView)
         homeTab.setTextColor(if (index == 0) UI.blue else UI.textSub)
         outTab.setTextColor(if (index == 1) UI.blue else UI.textSub)
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    private fun buildUi() {
+        UI.applyTheme(effectiveDark())
+
         window.statusBarColor = UI.bg
         window.navigationBarColor = UI.card
+        window.decorView.setBackgroundColor(UI.bg)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.isAppearanceLightStatusBars = true
-        controller.isAppearanceLightNavigationBars = true
+        controller.isAppearanceLightStatusBars = !UI.dark
+        controller.isAppearanceLightNavigationBars = !UI.dark
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -47,7 +66,7 @@ class MainActivity : AppCompatActivity() {
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        homeView = buildHome(this) { name ->
+        homeView = buildHome(this, mode, { m -> setMode(m) }) { name ->
             Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
         }
         outView = buildOutput(this)
@@ -76,6 +95,18 @@ class MainActivity : AppCompatActivity() {
         outTab.setOnClickListener { select(1) }
 
         setContentView(root)
-        select(0)
+        select(tab)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        mode = getSharedPreferences("app", MODE_PRIVATE).getInt("theme", 0)
+        tab = savedInstanceState?.getInt("tab", 0) ?: 0
+        buildUi()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("tab", tab)
     }
 }
