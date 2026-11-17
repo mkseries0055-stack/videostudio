@@ -1,6 +1,9 @@
 package com.example.videostudio
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -8,6 +11,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 
@@ -21,6 +26,49 @@ class MainActivity : AppCompatActivity() {
 
     private var tab = 0
     private var mode = 0 // 0 = লাইট, 1 = ডার্ক, 2 = অটো
+
+    private var picker: PickerScreen? = null
+    private var selectedVideos: List<VideoItem> = emptyList()
+
+    private val permLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) openPicker()
+            else Toast.makeText(this, "ভিডিও দেখাতে অনুমতি দরকার", Toast.LENGTH_SHORT).show()
+        }
+
+    private fun videoPermission(): String =
+        if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private fun startPicker() {
+        if (checkSelfPermission(videoPermission()) == PackageManager.PERMISSION_GRANTED) {
+            openPicker()
+        } else {
+            permLauncher.launch(videoPermission())
+        }
+    }
+
+    private fun openPicker() {
+        val p = PickerScreen(
+            this,
+            onBack = { closePicker() },
+            onNext = { list ->
+                selectedVideos = list
+                Toast.makeText(
+                    this,
+                    "${list.size} টি ভিডিও বাছা হয়েছে — সেটিংস পেজ পরের ধাপে আসছে",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        )
+        picker = p
+        setContentView(p.root)
+    }
+
+    private fun closePicker() {
+        picker = null
+        buildUi()
+    }
 
     private fun systemDark(): Boolean =
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -67,7 +115,11 @@ class MainActivity : AppCompatActivity() {
         root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         homeView = buildHome(this, mode, { m -> setMode(m) }) { name ->
-            Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
+            if (name == "Convert or Compress") {
+                startPicker()
+            } else {
+                Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
+            }
         }
         outView = buildOutput(this)
 
@@ -102,6 +154,19 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         mode = getSharedPreferences("app", MODE_PRIVATE).getInt("theme", 0)
         tab = savedInstanceState?.getInt("tab", 0) ?: 0
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val p = picker
+                if (p != null) {
+                    if (!p.handleBack()) closePicker()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+
         buildUi()
     }
 
