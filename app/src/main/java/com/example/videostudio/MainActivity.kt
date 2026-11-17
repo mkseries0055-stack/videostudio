@@ -36,6 +36,11 @@ class MainActivity : AppCompatActivity() {
             else Toast.makeText(this, "ভিডিও দেখাতে অনুমতি দরকার", Toast.LENGTH_SHORT).show()
         }
 
+    private val browseLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (!uris.isNullOrEmpty()) picker?.addExternal(uris)
+        }
+
     private fun videoPermission(): String =
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO
         else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -59,7 +64,8 @@ class MainActivity : AppCompatActivity() {
                     "${list.size} টি ভিডিও বাছা হয়েছে — সেটিংস পেজ পরের ধাপে আসছে",
                     Toast.LENGTH_SHORT
                 ).show()
-            }
+            },
+            onBrowse = { browseLauncher.launch(arrayOf("video/*")) }
         )
         picker = p
         setContentView(p.root)
