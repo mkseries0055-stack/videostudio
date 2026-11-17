@@ -6,14 +6,15 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-private fun tile(ctx: Context, emoji: String, label: String, ai: Boolean, onClick: () -> Unit): View {
+private fun tile(ctx: Context, icon: Int, label: String, ai: Boolean, onClick: () -> Unit): View {
     val d = { v: Int -> UI.dp(ctx, v) }
     val box = FrameLayout(ctx).apply {
-        background = UI.round(ctx, UI.card, 16)
+        background = UI.cardBg(ctx, UI.card, 16)
         isClickable = true
         setOnClickListener { onClick() }
     }
@@ -22,15 +23,14 @@ private fun tile(ctx: Context, emoji: String, label: String, ai: Boolean, onClic
         gravity = Gravity.CENTER
         setPadding(d(8), d(10), d(8), d(10))
     }
-    inner.addView(TextView(ctx).apply {
-        text = emoji
-        textSize = 28f
-        gravity = Gravity.CENTER
-    })
+    inner.addView(
+        ImageView(ctx).apply { setImageResource(icon) },
+        LinearLayout.LayoutParams(d(44), d(44))
+    )
     inner.addView(TextView(ctx).apply {
         text = label
         textSize = 13f
-        setTextColor(Color.WHITE)
+        setTextColor(UI.textMain)
         gravity = Gravity.CENTER
         setPadding(0, d(8), 0, 0)
     })
@@ -80,7 +80,7 @@ fun buildHome(ctx: Context, onTool: (String) -> Unit): View {
     top.addView(TextView(ctx).apply {
         text = "Video Studio"
         textSize = 20f
-        setTextColor(Color.WHITE)
+        setTextColor(UI.textMain)
         typeface = Typeface.DEFAULT_BOLD
     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     top.addView(TextView(ctx).apply {
@@ -91,20 +91,31 @@ fun buildHome(ctx: Context, onTool: (String) -> Unit): View {
     })
     col.addView(top)
 
-    val bigParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, d(84))
-    bigParams.topMargin = d(16)
-    col.addView(TextView(ctx).apply {
-        text = "🎞️  Convert or Compress"
+    val big = LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        background = UI.gradient(ctx, UI.lightBlue, UI.blue, 20)
+        isClickable = true
+        setOnClickListener { onTool("Convert or Compress") }
+    }
+    big.addView(
+        ImageView(ctx).apply { setImageResource(R.drawable.ic_convert) },
+        LinearLayout.LayoutParams(d(64), d(64))
+    )
+    big.addView(TextView(ctx).apply {
+        text = "Convert"
         textSize = 18f
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(Color.WHITE)
         gravity = Gravity.CENTER
-        background = UI.gradient(ctx, UI.orange, UI.pink, 18)
-        setOnClickListener { onTool("Convert or Compress") }
-    }, bigParams)
+        setPadding(0, d(4), 0, 0)
+    })
+    val bigParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, d(128))
+    bigParams.topMargin = d(16)
+    col.addView(big, bigParams)
 
-    fun mk(emoji: String, label: String, ai: Boolean = false): View =
-        tile(ctx, emoji, label, ai) { onTool(label) }
+    fun mk(icon: Int, label: String, ai: Boolean = false): View =
+        tile(ctx, icon, label, ai) { onTool(label) }
 
     fun addRow(tiles: List<View>) {
         val p = LinearLayout.LayoutParams(
@@ -114,14 +125,25 @@ fun buildHome(ctx: Context, onTool: (String) -> Unit): View {
         col.addView(row(ctx, tiles), p)
     }
 
-    addRow(listOf(mk("🔇", "Remove Noise", true), mk("🎼", "Split Music & Vocal", true)))
-    addRow(listOf(mk("✂️", "Video Cutter"), mk("🧩", "Video Merger"), mk("🎧", "Video To Audio")))
-    addRow(listOf(mk("🔄", "Audio Converter"), mk("🎚️", "Audio Cutter"), mk("🔗", "Audio Merger")))
+    addRow(listOf(
+        mk(R.drawable.ic_remove_noise, "Remove Noise", true),
+        mk(R.drawable.ic_split, "Split Music & Vocal", true)
+    ))
+    addRow(listOf(
+        mk(R.drawable.ic_video_cutter, "Video Cutter"),
+        mk(R.drawable.ic_video_merger, "Video Merger"),
+        mk(R.drawable.ic_video_to_audio, "Video To Audio")
+    ))
+    addRow(listOf(
+        mk(R.drawable.ic_audio_converter, "Audio Converter"),
+        mk(R.drawable.ic_audio_cutter, "Audio Cutter"),
+        mk(R.drawable.ic_audio_merger, "Audio Merger")
+    ))
 
     col.addView(TextView(ctx).apply {
         text = "More Tools"
         textSize = 15f
-        setTextColor(Color.WHITE)
+        setTextColor(UI.textMain)
         typeface = Typeface.DEFAULT_BOLD
         setPadding(0, d(24), 0, d(6))
     })
