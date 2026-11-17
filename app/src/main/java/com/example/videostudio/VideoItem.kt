@@ -3,6 +3,7 @@ package com.example.videostudio
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -78,6 +79,23 @@ object Thumbs {
     private val pool = Executors.newFixedThreadPool(3)
     private val main = Handler(Looper.getMainLooper())
 
+    private fun frameThumb(ctx: Context, uri: Uri): Bitmap? {
+        return try {
+            val r = MediaMetadataRetriever()
+            r.setDataSource(ctx, uri)
+            val f = r.getFrameAtTime(1_000_000) ?: r.getFrameAtTime(0)
+            r.release()
+            if (f == null) {
+                null
+            } else {
+                val h = (256f * f.height / f.width).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(f, 256, h, true)
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     fun load(ctx: Context, item: VideoItem, cb: (Bitmap?) -> Unit) {
         val cached = cache.get(item.id)
         if (cached != null) {
@@ -86,11 +104,12 @@ object Thumbs {
         }
         val app = ctx.applicationContext
         pool.execute {
-            val bmp: Bitmap? = try {
+            var bmp: Bitmap? = try {
                 app.contentResolver.loadThumbnail(item.uri, Size(256, 256), null)
             } catch (_: Throwable) {
                 null
             }
+            if (bmp == null) bmp = frameThumb(app, item.uri)
             if (bmp != null) cache.put(item.id, bmp)
             main.post { cb(bmp) }
         }
