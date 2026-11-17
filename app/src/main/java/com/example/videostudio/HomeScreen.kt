@@ -66,7 +66,12 @@ private fun row(ctx: Context, tiles: List<View>): LinearLayout {
     return r
 }
 
-fun buildHome(ctx: Context, onTool: (String) -> Unit): View {
+fun buildHome(
+    ctx: Context,
+    themeMode: Int,
+    onTheme: (Int) -> Unit,
+    onTool: (String) -> Unit
+): View {
     val d = { v: Int -> UI.dp(ctx, v) }
     val col = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
@@ -82,13 +87,9 @@ fun buildHome(ctx: Context, onTool: (String) -> Unit): View {
         textSize = 20f
         setTextColor(UI.textMain)
         typeface = Typeface.DEFAULT_BOLD
+        maxLines = 1
     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-    top.addView(TextView(ctx).apply {
-        text = "⚙️"
-        textSize = 20f
-        setPadding(d(8), d(8), d(8), d(8))
-        setOnClickListener { onTool("Settings") }
-    })
+    top.addView(buildThemeControl(ctx, themeMode, onTheme))
     col.addView(top)
 
     val big = LinearLayout(ctx).apply {
