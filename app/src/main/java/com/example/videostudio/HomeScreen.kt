@@ -59,7 +59,7 @@ private fun tile(ctx: Context, icon: Int, label: String, ai: Boolean, onClick: (
 private fun row(ctx: Context, tiles: List<View>): LinearLayout {
     val r = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
     tiles.forEachIndexed { i, t ->
-        val p = LinearLayout.LayoutParams(0, UI.dp(ctx, 96), 1f)
+        val p = LinearLayout.LayoutParams(0, UI.dp(ctx, 116), 1f)
         if (i > 0) p.leftMargin = UI.dp(ctx, 10)
         r.addView(t, p)
     }
