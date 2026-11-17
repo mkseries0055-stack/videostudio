@@ -8,6 +8,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,14 +28,17 @@ class MainActivity : AppCompatActivity() {
     private fun select(index: Int) {
         content.removeAllViews()
         content.addView(if (index == 0) homeView else outView)
-        homeTab.setTextColor(if (index == 0) UI.orange else UI.textSub)
-        outTab.setTextColor(if (index == 1) UI.orange else UI.textSub)
+        homeTab.setTextColor(if (index == 0) UI.blue else UI.textSub)
+        outTab.setTextColor(if (index == 1) UI.blue else UI.textSub)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = UI.bg
         window.navigationBarColor = UI.card
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = true
+        controller.isAppearanceLightNavigationBars = true
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -47,6 +51,13 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
         }
         outView = buildOutput(this)
+
+        val divider = View(this)
+        divider.setBackgroundColor(UI.border)
+        root.addView(
+            divider,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, UI.dp(this, 1))
+        )
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
