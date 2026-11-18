@@ -28,6 +28,8 @@ class MainActivity : AppCompatActivity() {
     private var mode = 0 // 0 = লাইট, 1 = ডার্ক, 2 = অটো
 
     private var picker: PickerScreen? = null
+    private var settings: SettingsScreen? = null
+    private val convertSettings = ConvertSettings()
     private var selectedVideos: List<VideoItem> = emptyList()
 
     private val permLauncher =
@@ -57,14 +59,7 @@ class MainActivity : AppCompatActivity() {
         val p = PickerScreen(
             this,
             onBack = { closePicker() },
-            onNext = { list ->
-                selectedVideos = list
-                Toast.makeText(
-                    this,
-                    "${list.size} টি ভিডিও ঠিক আছে — সেটিংস পেজ পরের ধাপে আসছে",
-                    Toast.LENGTH_SHORT
-                ).show()
-            },
+            onNext = { list -> openSettings(list) },
             onBrowse = { browseLauncher.launch(arrayOf("*/*")) }
         )
         picker = p
@@ -73,7 +68,39 @@ class MainActivity : AppCompatActivity() {
 
     private fun closePicker() {
         picker = null
+        settings = null
         buildUi()
+    }
+
+    private fun openSettings(list: List<VideoItem>) {
+        selectedVideos = list
+        convertSettings.audioMode = "DEFAULT"
+        convertSettings.subtitleMode = "DEFAULT"
+        val sc = SettingsScreen(
+            this,
+            list,
+            convertSettings,
+            onBack = { showPicker() },
+            onDone = { startNow -> onConvertRequested(list, startNow) }
+        )
+        settings = sc
+        setContentView(sc.root)
+    }
+
+    private fun showPicker() {
+        settings = null
+        val p = picker
+        if (p != null) setContentView(p.root) else buildUi()
+    }
+
+    private fun onConvertRequested(list: List<VideoItem>, startNow: Boolean) {
+        val st = convertSettings
+        val what = if (startNow) "শুরু হবে" else "কিউতে যোগ হয়েছে"
+        Toast.makeText(
+            this,
+            "${list.size} টি ভিডিও • ${st.format} • ${st.resolution} — $what (প্রগ্রেস পেজ পরের ধাপে আসছে)",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     private fun systemDark(): Boolean =
@@ -163,6 +190,10 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (settings != null) {
+                    showPicker()
+                    return
+                }
                 val p = picker
                 if (p != null) {
                     if (!p.handleBack()) closePicker()
