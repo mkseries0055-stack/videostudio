@@ -61,11 +61,11 @@ class MainActivity : AppCompatActivity() {
                 selectedVideos = list
                 Toast.makeText(
                     this,
-                    "${list.size} টি ভিডিও বাছা হয়েছে — সেটিংস পেজ পরের ধাপে আসছে",
+                    "${list.size} টি ভিডিও ঠিক আছে — সেটিংস পেজ পরের ধাপে আসছে",
                     Toast.LENGTH_SHORT
                 ).show()
             },
-            onBrowse = { browseLauncher.launch(arrayOf("video/*")) }
+            onBrowse = { browseLauncher.launch(arrayOf("*/*")) }
         )
         picker = p
         setContentView(p.root)
