@@ -24,6 +24,7 @@ import android.widget.GridView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 
@@ -42,6 +43,7 @@ class PickerScreen(
     private var all: List<VideoItem> = emptyList()
     private var loading = true
     private val selected = LinkedHashSet<Long>()
+    private val invalid = HashSet<Long>()
     private var tab = 0
     private var openFolder: String? = null
     private var query = ""
@@ -175,7 +177,6 @@ class PickerScreen(
         tabs.addView(c2, lp(0, WRAP, 1f))
         col.addView(tabs)
 
-        // File Browser বাটন
         banner = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -209,7 +210,7 @@ class PickerScreen(
             verticalSpacing = d(8)
             setSelector(ColorDrawable(Color.TRANSPARENT))
             setOnItemClickListener { _, _, pos, _ ->
-                if (pos in shown.indices) toggle(shown[pos])
+                if (pos in shown.indices) onItemTap(shown[pos])
             }
         }
         folderList = ListView(ctx).apply {
@@ -257,10 +258,7 @@ class PickerScreen(
             gravity = Gravity.CENTER
             background = UI.gradient(ctx, UI.lightBlue, UI.blue, 22)
             setPadding(d(24), d(10), d(24), d(10))
-            setOnClickListener {
-                val byId = all.associateBy { it.id }
-                onNext(selected.mapNotNull { byId[it] })
-            }
+            setOnClickListener { checkAndNext() }
         }
         bottomBar.addView(countView, lp(0, WRAP, 1f))
         bottomBar.addView(next)
@@ -282,7 +280,71 @@ class PickerScreen(
         return false
     }
 
-    // Files অ্যাপ থেকে বাছা ভিডিও যোগ করা
+    // NEXT চাপলে: Files থেকে বাছা ফাইল আসলেই ভিডিও কি না যাচাই
+    private fun checkAndNext() {
+        val byId = all.associateBy { it.id }
+        val items = selected.mapNotNull { byId[it] }
+        if (items.isEmpty()) return
+        val toCheck = items.filter { it.id < 0 }
+        if (toCheck.isEmpty()) {
+            onNext(items)
+            return
+        }
+
+        val wait = showWait()
+        Thread {
+            val bad = HashSet<Long>()
+            for (item in toCheck) {
+                if (!VideoCheck.isVideo(ctx, item.uri)) bad.add(item.id)
+            }
+            main.post {
+                try { wait.dismiss() } catch (_: Throwable) {}
+                if (bad.isEmpty()) {
+                    onNext(items)
+                } else {
+                    invalid.addAll(bad)
+                    selected.removeAll(bad)
+                    val good = items.filter { !bad.contains(it.id) }
+                    refresh()
+                    if (good.isEmpty()) {
+                        showInvalid(items.size > 1)
+                    } else {
+                        onNext(good)
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun showWait(): AlertDialog {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(d(24), d(20), d(24), d(20))
+        }
+        row.addView(ProgressBar(ctx), lp(d(36), d(36)))
+        row.addView(TextView(ctx).apply {
+            text = "Please wait...\nExtracting file info"
+            textSize = 15f
+            setPadding(d(16), 0, 0, 0)
+        })
+        val dlg = AlertDialog.Builder(ctx).setView(row).setCancelable(false).create()
+        dlg.show()
+        return dlg
+    }
+
+    private fun showInvalid(multi: Boolean) {
+        AlertDialog.Builder(ctx)
+            .setTitle("Invalid file")
+            .setMessage(
+                if (multi) "বাছা ফাইলগুলোর কোনোটিই ভিডিও ফাইল নয়।"
+                else "এই ফাইলটি ভিডিও ফাইল নয়।"
+            )
+            .setPositiveButton("Close", null)
+            .show()
+    }
+
+    // Files অ্যাপ থেকে বাছা ফাইল যোগ করা
     fun addExternal(uris: List<Uri>) {
         if (uris.isEmpty()) return
         Thread {
@@ -290,7 +352,7 @@ class PickerScreen(
             val created = ArrayList<VideoItem>()
             for (u in uris) {
                 if (u in existing) continue
-                var name = "video"
+                var name = "file"
                 var size = 0L
                 try {
                     ctx.contentResolver.query(u, null, null, null, null)?.use { c ->
@@ -357,6 +419,18 @@ class PickerScreen(
             .show()
     }
 
+    // "!" চিহ্নিত ফাইলে চাপলে সেটি তালিকা থেকে সরে যায়
+    private fun onItemTap(item: VideoItem) {
+        if (invalid.contains(item.id)) {
+            invalid.remove(item.id)
+            selected.remove(item.id)
+            all = all.filter { it.id != item.id }
+            refresh()
+        } else {
+            toggle(item)
+        }
+    }
+
     private fun toggle(item: VideoItem) {
         if (!selected.remove(item.id)) selected.add(item.id)
         (videoGrid.adapter as? BaseAdapter)?.notifyDataSetChanged()
@@ -419,7 +493,11 @@ class PickerScreen(
         videoGrid.visibility = View.VISIBLE
         videoGrid.numColumns = if (grid) 3 else 1
         if (grid) videoGrid.columnWidth = cell
-        videoGrid.adapter = VideoAdapter(ctx, shown, grid, cell) { id -> selected.contains(id) }
+        videoGrid.adapter = VideoAdapter(
+            ctx, shown, grid, cell,
+            { id -> selected.contains(id) },
+            { id -> invalid.contains(id) }
+        )
     }
 
     private fun showFolders() {
