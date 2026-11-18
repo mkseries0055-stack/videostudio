@@ -17,6 +17,7 @@ import android.widget.TextView
 
 private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
 private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+private val RED = Color.parseColor("#EF4444")
 
 class ItemHolder(
     val root: View,
@@ -100,13 +101,21 @@ fun createHolder(ctx: Context, grid: Boolean, cell: Int): ItemHolder {
     return ItemHolder(root, thumb, badge, name, info, check)
 }
 
-fun bindHolder(ctx: Context, h: ItemHolder, item: VideoItem, selected: Boolean, grid: Boolean) {
+fun bindHolder(
+    ctx: Context,
+    h: ItemHolder,
+    item: VideoItem,
+    selected: Boolean,
+    invalid: Boolean,
+    grid: Boolean
+) {
     val d = { v: Int -> UI.dp(ctx, v) }
+    val dur = if (item.durationMs > 0) fmtDuration(item.durationMs) else "--:--"
     h.name.text = item.name
-    h.name.setTextColor(UI.textMain)
+    h.name.setTextColor(if (invalid) RED else UI.textMain)
     h.info.setTextColor(UI.textSub)
-    h.info.text = fmtDuration(item.durationMs) + "  •  " + fmtSize(item.size)
-    h.badge.text = fmtDuration(item.durationMs)
+    h.info.text = dur + "  •  " + fmtSize(item.size)
+    h.badge.text = dur
 
     h.thumb.tag = item.id
     h.thumb.setImageBitmap(null)
@@ -118,19 +127,36 @@ fun bindHolder(ctx: Context, h: ItemHolder, item: VideoItem, selected: Boolean, 
         h.root.background = GradientDrawable().apply {
             setColor(UI.card)
             cornerRadius = d(12).toFloat()
-            setStroke(d(if (selected) 2 else 1), if (selected) UI.blue else UI.border)
+            val strokeColor = when {
+                invalid -> RED
+                selected -> UI.blue
+                else -> UI.border
+            }
+            setStroke(d(if (selected || invalid) 2 else 1), strokeColor)
         }
     }
-    h.thumb.alpha = if (selected && grid) 0.55f else 1f
+    h.thumb.alpha = when {
+        invalid -> 0.4f
+        selected && grid -> 0.55f
+        else -> 1f
+    }
 
-    h.check.text = if (selected) "✓" else ""
-    h.check.background = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        if (selected) {
-            setColor(UI.blue)
-        } else {
-            setColor(if (grid) Color.parseColor("#55000000") else Color.TRANSPARENT)
-            setStroke(d(2), if (grid) Color.WHITE else Color.parseColor("#9CA3AF"))
+    if (invalid) {
+        h.check.text = "!"
+        h.check.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(RED)
+        }
+    } else {
+        h.check.text = if (selected) "✓" else ""
+        h.check.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            if (selected) {
+                setColor(UI.blue)
+            } else {
+                setColor(if (grid) Color.parseColor("#55000000") else Color.TRANSPARENT)
+                setStroke(d(2), if (grid) Color.WHITE else Color.parseColor("#9CA3AF"))
+            }
         }
     }
 }
@@ -140,7 +166,8 @@ class VideoAdapter(
     private val items: List<VideoItem>,
     private val grid: Boolean,
     private val cell: Int,
-    private val isSelected: (Long) -> Boolean
+    private val isSelected: (Long) -> Boolean,
+    private val isInvalid: (Long) -> Boolean
 ) : BaseAdapter() {
     override fun getCount(): Int = items.size
     override fun getItem(position: Int): Any = items[position]
@@ -149,7 +176,7 @@ class VideoAdapter(
         val h = (convertView?.tag as? ItemHolder)
             ?: createHolder(ctx, grid, cell).also { it.root.tag = it }
         val item = items[position]
-        bindHolder(ctx, h, item, isSelected(item.id), grid)
+        bindHolder(ctx, h, item, isSelected(item.id), isInvalid(item.id), grid)
         return h.root
     }
 }
