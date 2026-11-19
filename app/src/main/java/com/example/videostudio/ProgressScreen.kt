@@ -6,8 +6,11 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -20,6 +23,11 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import java.util.Locale
 
 private object Ic {
@@ -28,6 +36,11 @@ private object Ic {
     const val SHARE =
         "M15.5,5a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0M3.5,12a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0M15.5,19a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0M8.2,10.8l7.6,-4.4M8.2,13.2l7.6,4.4"
     const val TRASH = "M4,7h16M9,7V4h6v3M6,7l1,13h10l1,-13M10,11v6M14,11v6"
+}
+
+// যেসব কাজের মূল ফাইল মুছে ফেলা হয়েছে তাদের আইডি
+object OriginalState {
+    val deleted = HashSet<Long>()
 }
 
 class ProgressScreen(
@@ -51,7 +64,9 @@ class ProgressScreen(
         val status: TextView,
         val result: LinearLayout,
         val resultText: TextView,
-        val actions: LinearLayout
+        val actions: LinearLayout,
+        val delCol: LinearLayout,
+        val delLabel: TextView
     )
 
     private val cards = LinkedHashMap<Long, Card>()
@@ -82,6 +97,10 @@ class ProgressScreen(
     }
 
     private fun lp(w: Int, h: Int, wt: Float = 0f) = LinearLayout.LayoutParams(w, h, wt)
+
+    private fun toast(t: String) {
+        Toast.makeText(ctx, t, Toast.LENGTH_SHORT).show()
+    }
 
     private fun barOf(): ProgressBar =
         ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -156,6 +175,58 @@ class ProgressScreen(
         col.addView(scroll, lp(MATCH, 0, 1f))
 
         return col
+    }
+
+    // মূল (সোর্স) ভিডিও মোছা
+    private fun deleteOriginal(job: Job) {
+        if (OriginalState.deleted.contains(job.id)) return
+        val uri = job.item.uri
+        val mediaStoreItem = job.item.id > 0
+        val act = ctx as? ComponentActivity
+
+        if (mediaStoreItem && Build.VERSION.SDK_INT >= 30 && act != null) {
+            try {
+                val sender = MediaStore.createDeleteRequest(ctx.contentResolver, listOf(uri)).intentSender
+                var launcher: ActivityResultLauncher<IntentSenderRequest>? = null
+                launcher = act.activityResultRegistry.register(
+                    "del_" + System.nanoTime(),
+                    ActivityResultContracts.StartIntentSenderForResult()
+                ) { res ->
+                    if (res.resultCode == Activity.RESULT_OK) {
+                        OriginalState.deleted.add(job.id)
+                        refresh()
+                    }
+                    launcher?.unregister()
+                }
+                launcher!!.launch(IntentSenderRequest.Builder(sender).build())
+            } catch (_: Throwable) {
+                toast("মূল ফাইল মোছা যায়নি")
+            }
+            return
+        }
+
+        AlertDialog.Builder(ctx)
+            .setTitle("Delete Original?")
+            .setMessage(job.item.name + "\n\nমূল ফাইলটি মুছে গেলে আর ফেরত পাবেন না।")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Delete") { _, _ ->
+                try {
+                    val ok = if (mediaStoreItem) {
+                        ctx.contentResolver.delete(uri, null, null) > 0
+                    } else {
+                        DocumentsContract.deleteDocument(ctx.contentResolver, uri)
+                    }
+                    if (ok) {
+                        OriginalState.deleted.add(job.id)
+                        refresh()
+                    } else {
+                        toast("মূল ফাইল মোছা যায়নি")
+                    }
+                } catch (_: Throwable) {
+                    toast("এই ফাইল এখান থেকে মোছা যায়নি, Files অ্যাপ থেকে মুছুন")
+                }
+            }
+            .show()
     }
 
     private fun makeCard(job: Job): Card {
@@ -236,17 +307,43 @@ class ProgressScreen(
 
         val actions = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, d(6), 0, 0)
+            gravity = Gravity.TOP
+            setPadding(0, d(10), 0, 0)
         }
-        fun act(path: String, onClick: () -> Unit): ImageView = ImageView(ctx).apply {
-            setImageDrawable(PathIcon(path, UI.blue))
-            setPadding(d(9), d(9), d(9), d(9))
-            layoutParams = LinearLayout.LayoutParams(d(44), d(44)).apply { rightMargin = d(8) }
-            background = UI.cardBg(ctx, UI.bg, 12)
-            setOnClickListener { onClick() }
+
+        // আইকনের নিচে লেখাসহ বাটন
+        fun act(
+            path: String,
+            label: String,
+            tint: Int,
+            labelColor: Int,
+            onClick: () -> Unit
+        ): Pair<LinearLayout, TextView> {
+            val colL = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = d(18) }
+                isClickable = true
+                setOnClickListener { onClick() }
+            }
+            colL.addView(ImageView(ctx).apply {
+                setImageDrawable(PathIcon(path, tint))
+                setPadding(d(11), d(11), d(11), d(11))
+                background = UI.cardBg(ctx, UI.bg, 12)
+            }, LinearLayout.LayoutParams(d(48), d(48)))
+            val tv = TextView(ctx).apply {
+                text = label
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(labelColor)
+                gravity = Gravity.CENTER
+                setPadding(0, d(4), 0, 0)
+            }
+            colL.addView(tv)
+            return Pair(colL, tv)
         }
-        actions.addView(act(Ic.PLAY) {
+
+        val (playCol, _) = act(Ic.PLAY, "PLAY", UI.blue, UI.textMain) {
             val u = job.outUri
             if (u != null) {
                 try {
@@ -256,11 +353,11 @@ class ProgressScreen(
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     )
                 } catch (_: Throwable) {
-                    Toast.makeText(ctx, "প্লে করার অ্যাপ পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
+                    toast("প্লে করার অ্যাপ পাওয়া যায়নি")
                 }
             }
-        })
-        actions.addView(act(Ic.SHARE) {
+        }
+        val (shareCol, _) = act(Ic.SHARE, "SHARE", UI.blue, UI.textMain) {
             val u = job.outUri
             if (u != null) {
                 try {
@@ -272,20 +369,17 @@ class ProgressScreen(
                 } catch (_: Throwable) {
                 }
             }
-        })
-        actions.addView(act(Ic.TRASH) {
-            val u = job.outUri
-            if (u != null) {
-                try { ctx.contentResolver.delete(u, null, null) } catch (_: Throwable) {}
-                job.outDeleted = true
-                job.outUri = null
-                refresh()
-            }
-        })
+        }
+        val (delCol, delLabel) = act(Ic.TRASH, "Delete Original", red, red) {
+            deleteOriginal(job)
+        }
+        actions.addView(playCol)
+        actions.addView(shareCol)
+        actions.addView(delCol)
         result.addView(actions)
         card.addView(result)
 
-        return Card(job, card, x, info, bar, pct, status, result, resultText, actions)
+        return Card(job, card, x, info, bar, pct, status, result, resultText, actions, delCol, delLabel)
     }
 
     private fun update(c: Card) {
@@ -345,18 +439,17 @@ class ProgressScreen(
 
         if (s == QueueManager.DONE) {
             c.result.visibility = View.VISIBLE
-            if (j.outDeleted) {
-                c.resultText.text = "ফাইলটি মুছে ফেলা হয়েছে"
-                c.actions.visibility = View.GONE
-            } else {
-                var t = "Original " + fmtSize(j.item.size) + "  →  Output " + fmtSize(j.outSize)
-                if (j.outRes.isNotEmpty()) t += "  •  " + j.outRes
-                t += "\nMovies/VideoStudio/" + j.outName
-                if (j.note.isNotEmpty()) t += "\n" + j.note
-                c.resultText.text = t
-                c.resultText.setTextColor(UI.textSub)
-                c.actions.visibility = View.VISIBLE
-            }
+            var t = "Original " + fmtSize(j.item.size) + "  →  Output " + fmtSize(j.outSize)
+            if (j.outRes.isNotEmpty()) t += "  •  " + j.outRes
+            t += "\nMovies/VideoStudio/" + j.outName
+            if (j.note.isNotEmpty()) t += "\n" + j.note
+            val gone = OriginalState.deleted.contains(j.id)
+            if (gone) t += "\nমূল ফাইল মুছে ফেলা হয়েছে"
+            c.resultText.text = t
+            c.resultText.setTextColor(UI.textSub)
+            c.actions.visibility = View.VISIBLE
+            c.delCol.alpha = if (gone) 0.4f else 1f
+            c.delLabel.text = if (gone) "Deleted" else "Delete Original"
         } else if (s == QueueManager.FAILED) {
             c.result.visibility = View.VISIBLE
             c.resultText.text = j.error.ifEmpty { "কনভার্ট ব্যর্থ হয়েছে" }
