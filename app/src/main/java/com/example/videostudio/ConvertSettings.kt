@@ -5,9 +5,11 @@ data class Opt(val label: String, val sub: String = "")
 class ConvertSettings {
     var profile = "NONE"
     var format = "ORIGINAL"
-    var resolution = "ORIGINAL"
-    var audioMode = "DEFAULT"      // DEFAULT, ALL, NONE, অথবা TRACK:<নম্বর>
-    var subtitleMode = "DEFAULT"
+    var resolution = "ORIGINAL"    // ORIGINAL, 720P, CUSTOM:854x480, 176×144
+    var audioSel: Set<Int> = setOf(0)   // খালি মানে NONE
+    var subSel: Set<Int> = setOf(0)
+    var audioMode = "DEFAULT"      // পুরোনো, এখন ব্যবহার হয় না
+    var subtitleMode = "DEFAULT"   // পুরোনো, এখন ব্যবহার হয় না
     var frameRate = "ORIGINAL"
     var audioBitrate = "AUTO"
     var compress = false
@@ -39,19 +41,10 @@ object Options {
         Opt("WEBM", "VP9 • Opus")
     )
 
-    val normalRes = listOf("ORIGINAL", "1080P", "720P", "480P", "360P", "240P", "144P")
     val keypadRes = listOf("176×144", "352×288", "128×96")
+    val presetHeights = listOf(1080, 720, 480, 360, 240)
     val frameRates = listOf("ORIGINAL", "30", "25", "24", "15")
     val audioBitrates = listOf("AUTO", "64K", "96K", "128K", "192K")
-
-    val basicModes = listOf(
-        Opt("DEFAULT", "ফাইলের ডিফল্ট ট্র্যাক"),
-        Opt("ALL", "সব ট্র্যাক রাখুন"),
-        Opt("NONE", "বাদ দিন")
-    )
-
-    fun resolutionsFor(format: String): List<String> =
-        if (format == "3GP") keypadRes else normalRes
 
     fun applyProfile(s: ConvertSettings, name: String) {
         s.profile = name
@@ -82,8 +75,10 @@ object Options {
     fun setFormat(s: ConvertSettings, f: String) {
         s.format = f
         s.profile = "NONE"
-        if (!resolutionsFor(f).contains(s.resolution)) {
-            s.resolution = if (f == "3GP") "176×144" else "ORIGINAL"
+        if (f == "3GP") {
+            if (!keypadRes.contains(s.resolution)) s.resolution = "176×144"
+        } else if (keypadRes.contains(s.resolution)) {
+            s.resolution = "ORIGINAL"
         }
     }
 }
