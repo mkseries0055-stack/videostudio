@@ -7,7 +7,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.ViewGroup
 import android.view.Window
@@ -22,13 +24,15 @@ object Sheets2 {
     private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
-    // অডিও / সাবটাইটেল ট্র্যাক: চেকবক্স + NONE + DONE
+    // অডিও / সাবটাইটেল ট্র্যাক: + ADD EXTERNAL, চেকবক্স, NONE, DONE
     fun tracks(
         ctx: Context,
         title: String,
         tracks: List<TrackInfo>,
         selected: Set<Int>,
         emptyMsg: String,
+        addLabel: String?,
+        onAdd: () -> Unit,
         onDone: (Set<Int>) -> Unit
     ) {
         val d = { v: Int -> UI.dp(ctx, v) }
@@ -72,6 +76,29 @@ object Sheets2 {
             }
         })
         box.addView(head)
+
+        if (addLabel != null) {
+            val add = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(d(22), d(10), d(16), d(10))
+                isClickable = true
+                setOnClickListener {
+                    dlg.dismiss()
+                    onDone(sel.toSet())
+                    onAdd()
+                }
+            }
+            add.addView(lineIcon(ctx, LineIcons.ADD_FOLDER, UI.textMain, 22))
+            add.addView(TextView(ctx).apply {
+                text = addLabel
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(UI.textMain)
+                setPadding(d(12), 0, 0, 0)
+            })
+            box.addView(add)
+        }
 
         val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         if (tracks.isEmpty()) {
@@ -140,11 +167,11 @@ object Sheets2 {
             sync()
         }
 
-        val maxH = (ctx.resources.displayMetrics.heightPixels * 0.6f).toInt()
+        val maxH = (ctx.resources.displayMetrics.heightPixels * 0.55f).toInt()
         val scroll = ScrollView(ctx).apply { addView(list) }
         box.addView(
             scroll,
-            LinearLayout.LayoutParams(MATCH, if (tracks.size > 6) maxH else WRAP)
+            LinearLayout.LayoutParams(MATCH, if (tracks.size > 5) maxH else WRAP)
         )
 
         dlg.setOnCancelListener { onDone(sel.toSet()) }
@@ -157,7 +184,7 @@ object Sheets2 {
         dlg.show()
     }
 
-    // নিজের মাপ লেখা (CUSTOM RESOLUTION)
+    // ADD CUSTOM RESOLUTION: Width, Height, MAINTAIN ASPECT RATIO
     fun customResolution(ctx: Context, initW: Int, initH: Int, onOk: (Int, Int) -> Unit) {
         val d = { v: Int -> UI.dp(ctx, v) }
         val dlg = Dialog(ctx)
@@ -169,16 +196,10 @@ object Sheets2 {
             setPadding(d(22), d(20), d(22), d(16))
         }
         box.addView(TextView(ctx).apply {
-            text = "CUSTOM RESOLUTION"
+            text = "ADD CUSTOM RESOLUTION"
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(UI.blue)
-        })
-        box.addView(TextView(ctx).apply {
-            text = "প্রস্থ × উচ্চতা (পিক্সেল)"
-            textSize = 12f
-            setTextColor(UI.textSub)
-            setPadding(0, d(4), 0, 0)
         })
 
         fun field(init: Int) = EditText(ctx).apply {
@@ -193,6 +214,19 @@ object Sheets2 {
         val etW = field(initW)
         val etH = field(initH)
 
+        fun label(t: String) = TextView(ctx).apply {
+            text = t
+            textSize = 12f
+            setTextColor(UI.textSub)
+            gravity = Gravity.CENTER
+        }
+
+        val labels = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        labels.addView(label("Width"), LinearLayout.LayoutParams(0, WRAP, 1f))
+        labels.addView(label(""), LinearLayout.LayoutParams(d(34), WRAP))
+        labels.addView(label("Height"), LinearLayout.LayoutParams(0, WRAP, 1f))
+        box.addView(labels, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = d(12) })
+
         val inputs = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -202,10 +236,38 @@ object Sheets2 {
             text = "×"
             textSize = 20f
             setTextColor(UI.textMain)
-            setPadding(d(12), 0, d(12), 0)
-        })
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(d(34), WRAP))
         inputs.addView(etH, LinearLayout.LayoutParams(0, WRAP, 1f))
-        box.addView(inputs, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = d(10) })
+        box.addView(inputs, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        val cb = CheckBox(ctx).apply {
+            text = "MAINTAIN ASPECT RATIO"
+            isChecked = true
+            textSize = 13f
+            setTextColor(UI.textMain)
+            buttonTintList = ColorStateList.valueOf(UI.blue)
+        }
+        box.addView(cb, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = d(10) })
+
+        val ratio = if (initH > 0) initW.toFloat() / initH.toFloat() else 1f
+        var busy = false
+        fun watch(src: EditText, dst: EditText, fromW: Boolean) {
+            src.addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(e: Editable?) {
+                    if (busy || !cb.isChecked) return
+                    val v = e?.toString()?.toIntOrNull() ?: return
+                    busy = true
+                    val other = if (fromW) Math.round(v / ratio) else Math.round(v * ratio)
+                    dst.setText(Math.max(1, other).toString())
+                    busy = false
+                }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        watch(etW, etH, true)
+        watch(etH, etW, false)
 
         val cancel = TextView(ctx).apply {
             text = "CANCEL"
