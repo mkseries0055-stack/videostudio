@@ -1,6 +1,7 @@
 package com.example.videostudio
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.arthenica.ffmpegkit.FFprobeKit
 
@@ -10,7 +11,49 @@ class ProbeResult(val audio: List<TrackInfo>, val subs: List<TrackInfo>)
 
 object TrackProbe {
 
-    // ফাইলের ভেতরের অডিও ও সাবটাইটেল ট্র্যাকের তালিকা বের করা
+    // ভিডিওর আসল মাপ (প্রস্থ, উচ্চতা)
+    fun dims(ctx: Context, uri: Uri): Pair<Int, Int>? {
+        try {
+            val r = MediaMetadataRetriever()
+            try {
+                r.setDataSource(ctx, uri)
+                var w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                    ?.toIntOrNull() ?: 0
+                var h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                    ?.toIntOrNull() ?: 0
+                val rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                    ?.toIntOrNull() ?: 0
+                if (rot == 90 || rot == 270) {
+                    val t = w
+                    w = h
+                    h = t
+                }
+                if (w > 0 && h > 0) return Pair(w, h)
+            } finally {
+                try { r.release() } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {
+        }
+        try {
+            ctx.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                val session = FFprobeKit.getMediaInformation("/proc/self/fd/" + pfd.fd)
+                val streams = session.mediaInformation?.streams
+                if (streams != null) {
+                    for (st in streams) {
+                        if (st.type == "video") {
+                            val w = (st.width ?: 0L).toInt()
+                            val h = (st.height ?: 0L).toInt()
+                            if (w > 0 && h > 0) return Pair(w, h)
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return null
+    }
+
+    // ফাইলের ভেতরের অডিও ও সাবটাইটেল ট্র্যাকের তালিকা
     fun probe(ctx: Context, uri: Uri): ProbeResult? {
         try {
             ctx.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
