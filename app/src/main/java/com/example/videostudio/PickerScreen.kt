@@ -55,7 +55,7 @@ class PickerScreen(
 
     private lateinit var titleView: TextView
     private lateinit var searchBox: EditText
-    private lateinit var gridBtn: TextView
+    private lateinit var gridBtn: ImageView
     private lateinit var tabMedia: TextView
     private lateinit var tabFolders: TextView
     private lateinit var indMedia: View
@@ -83,13 +83,14 @@ class PickerScreen(
 
     private fun lp(w: Int, h: Int, wt: Float = 0f) = LinearLayout.LayoutParams(w, h, wt)
 
-    private fun iconText(t: String, onClick: () -> Unit) = TextView(ctx).apply {
-        text = t
-        textSize = 20f
-        setTextColor(UI.textMain)
-        gravity = Gravity.CENTER
-        setPadding(d(10), d(6), d(10), d(6))
-        setOnClickListener { onClick() }
+    private fun iconBtn(path: String, onClick: () -> Unit): ImageView {
+        val px = d(44)
+        return ImageView(ctx).apply {
+            setImageDrawable(PathIcon(path, UI.textMain))
+            setPadding(d(11), d(11), d(11), d(11))
+            layoutParams = LinearLayout.LayoutParams(px, px)
+            setOnClickListener { onClick() }
+        }
     }
 
     private fun build(): View {
@@ -110,16 +111,17 @@ class PickerScreen(
             typeface = Typeface.DEFAULT_BOLD
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
+            setPadding(d(4), 0, 0, 0)
         }
-        gridBtn = iconText("▦") {
+        gridBtn = iconBtn(LineIcons.GRID) {
             grid = !grid
             refresh()
         }
-        top.addView(iconText("←") { if (!handleBack()) onBack() })
+        top.addView(iconBtn(LineIcons.BACK) { if (!handleBack()) onBack() })
         top.addView(titleView, lp(0, WRAP, 1f))
-        top.addView(iconText("🔍") { toggleSearch() })
+        top.addView(iconBtn(LineIcons.SEARCH) { toggleSearch() })
         top.addView(gridBtn)
-        top.addView(iconText("⇅") { showSort() })
+        top.addView(iconBtn(LineIcons.SORT) { showSort() })
         col.addView(top)
 
         searchBox = EditText(ctx).apply {
@@ -463,7 +465,7 @@ class PickerScreen(
         indMedia.setBackgroundColor(if (tab == 0) UI.blue else Color.TRANSPARENT)
         indFolders.setBackgroundColor(if (tab == 1) UI.blue else Color.TRANSPARENT)
         titleView.text = openFolder ?: "Select files"
-        gridBtn.text = if (grid) "☰" else "▦"
+        gridBtn.setImageDrawable(PathIcon(if (grid) LineIcons.LIST else LineIcons.GRID, UI.textMain))
         banner.visibility =
             if (tab == 0 && openFolder == null && query.isEmpty()) View.VISIBLE else View.GONE
 
@@ -502,7 +504,8 @@ class PickerScreen(
 
     private fun showFolders() {
         videoGrid.visibility = View.GONE
-        val groups = all.groupBy { it.folder }
+        val groups = all.filter { !invalid.contains(it.id) }
+            .groupBy { it.folder }
             .filter { query.isEmpty() || it.key.contains(query, ignoreCase = true) }
             .map { Pair(it.key, it.value.size) }
             .sortedBy { it.first.lowercase() }
