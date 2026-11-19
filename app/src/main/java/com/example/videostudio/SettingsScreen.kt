@@ -5,23 +5,28 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 
 class SettingsScreen(
     private val ctx: Context,
     private val items: List<VideoItem>,
     private val s: ConvertSettings,
+    private val pickExternal: ((Uri?) -> Unit) -> Unit,
     private val onBack: () -> Unit,
     private val onDone: (Boolean) -> Unit
 ) {
@@ -30,6 +35,7 @@ class SettingsScreen(
     private val d = { v: Int -> UI.dp(ctx, v) }
     private val main = Handler(Looper.getMainLooper())
     private val teal = Color.parseColor("#14B8A6")
+    private val single = items.size == 1
 
     private var audioTracks: List<TrackInfo> = emptyList()
     private var subTracks: List<TrackInfo> = emptyList()
@@ -49,12 +55,14 @@ class SettingsScreen(
     private lateinit var compressNote: TextView
     private lateinit var note: TextView
     private lateinit var advBox: LinearLayout
-    private lateinit var advArrow: TextView
+    private lateinit var advArrow: ImageView
 
     val root: View = build()
 
     init {
-        if (items.size > 1) {
+        s.extAudio.clear()
+        s.extSubs.clear()
+        if (!single) {
             val pseudo = listOf(TrackInfo("DEFAULT", "প্রতিটি ভিডিওর প্রথম ট্র্যাক"))
             audioTracks = pseudo
             subTracks = pseudo
@@ -63,7 +71,7 @@ class SettingsScreen(
         s.audioSel = setOf(0)
         s.subSel = setOf(0)
         refresh()
-        if (items.size == 1) probeTracks()
+        if (single) probeTracks()
     }
 
     private fun lp(w: Int, h: Int, wt: Float = 0f) = LinearLayout.LayoutParams(w, h, wt)
@@ -72,16 +80,17 @@ class SettingsScreen(
         parent.addView(v, lp(MATCH, WRAP).apply { topMargin = d(10) })
     }
 
-    private fun iconText(t: String, onClick: () -> Unit) = TextView(ctx).apply {
-        text = t
-        textSize = 20f
-        setTextColor(UI.textMain)
-        gravity = Gravity.CENTER
-        setPadding(d(12), d(6), d(12), d(6))
-        setOnClickListener { onClick() }
+    private fun iconBtn(path: String, onClick: () -> Unit): ImageView {
+        val px = d(44)
+        return ImageView(ctx).apply {
+            setImageDrawable(PathIcon(path, UI.textMain))
+            setPadding(d(11), d(11), d(11), d(11))
+            layoutParams = LinearLayout.LayoutParams(px, px)
+            setOnClickListener { onClick() }
+        }
     }
 
-    private fun optionRow(emoji: String, label: String, onClick: () -> Unit): Pair<View, TextView> {
+    private fun optionRow(iconPath: String, label: String, onClick: () -> Unit): Pair<View, TextView> {
         val value = TextView(ctx).apply {
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
@@ -94,27 +103,19 @@ class SettingsScreen(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = UI.cardBg(ctx, UI.card, 14)
-            setPadding(d(16), d(16), d(14), d(16))
+            setPadding(d(16), d(16), d(12), d(16))
             isClickable = true
             setOnClickListener { onClick() }
         }
-        row.addView(TextView(ctx).apply {
-            text = emoji
-            textSize = 20f
-        })
+        row.addView(lineIcon(ctx, iconPath, UI.textSub, 22))
         row.addView(TextView(ctx).apply {
             text = label
             textSize = 15f
             setTextColor(UI.textMain)
-            setPadding(d(12), 0, d(10), 0)
+            setPadding(d(14), 0, d(10), 0)
         })
         row.addView(value, lp(0, WRAP, 1f))
-        row.addView(TextView(ctx).apply {
-            text = "›"
-            textSize = 20f
-            setTextColor(UI.textSub)
-            setPadding(d(8), 0, 0, 0)
-        })
+        row.addView(lineIcon(ctx, LineIcons.CHEVRON, UI.textSub, 18))
         return Pair(row, value)
     }
 
@@ -127,14 +128,15 @@ class SettingsScreen(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(d(4), d(8), d(8), d(8))
         }
-        top.addView(iconText("←") { onBack() })
+        top.addView(iconBtn(LineIcons.BACK) { onBack() })
         top.addView(TextView(ctx).apply {
             text = "Video Converter"
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(UI.textMain)
+            setPadding(d(4), 0, 0, 0)
         }, lp(0, WRAP, 1f))
-        top.addView(iconText("?") { showHelp() })
+        top.addView(iconBtn(LineIcons.HELP) { showHelp() })
         page.addView(top)
 
         val scroll = ScrollView(ctx)
@@ -144,37 +146,43 @@ class SettingsScreen(
         }
 
         val total = items.sumOf { it.size }
-        val infoText = if (items.size == 1) {
-            "🎬  " + items[0].name + "\n" + fmtSize(items[0].size)
+        val infoText = if (single) {
+            items[0].name + "\n" + fmtSize(items[0].size)
         } else {
-            "🎬  ${items.size} টি ভিডিও বাছা হয়েছে\nমোট " + fmtSize(total)
+            "${items.size} টি ভিডিও বাছা হয়েছে\nমোট " + fmtSize(total)
         }
-        val info = TextView(ctx).apply {
-            text = infoText
-            textSize = 13f
-            setTextColor(UI.textSub)
+        val info = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             background = UI.cardBg(ctx, UI.card, 14)
             setPadding(d(16), d(12), d(16), d(12))
         }
+        info.addView(lineIcon(ctx, LineIcons.FORMAT, UI.textSub, 22))
+        info.addView(TextView(ctx).apply {
+            text = infoText
+            textSize = 13f
+            setTextColor(UI.textSub)
+            setPadding(d(14), 0, 0, 0)
+        }, lp(0, WRAP, 1f))
         addTo(col, info)
 
-        val (rProfile, vp) = optionRow("🎯", "Conversion Profile") { pickProfile() }
+        val (rProfile, vp) = optionRow(LineIcons.PROFILE, "Conversion Profile") { pickProfile() }
         vProfile = vp
         addTo(col, rProfile)
 
-        val (rFormat, vf) = optionRow("🎞️", "Format") { pickFormat() }
+        val (rFormat, vf) = optionRow(LineIcons.FORMAT, "Format") { pickFormat() }
         vFormat = vf
         addTo(col, rFormat)
 
-        val (rRes, vr) = optionRow("📐", "Resolution") { pickResolution() }
+        val (rRes, vr) = optionRow(LineIcons.RESOLUTION, "Resolution") { pickResolution() }
         vRes = vr
         addTo(col, rRes)
 
-        val (rSub, vs) = optionRow("💬", "Subtitle tracks") { pickSubtitle() }
+        val (rSub, vs) = optionRow(LineIcons.SUBTITLE, "Subtitle tracks") { pickSubtitle() }
         vSub = vs
         addTo(col, rSub)
 
-        val (rAudio, va) = optionRow("🔊", "Audio tracks") { pickAudio() }
+        val (rAudio, va) = optionRow(LineIcons.AUDIO, "Audio tracks") { pickAudio() }
         vAudio = va
         addTo(col, rAudio)
 
@@ -182,25 +190,18 @@ class SettingsScreen(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = UI.cardBg(ctx, UI.card, 14)
-            setPadding(d(16), d(16), d(14), d(16))
+            setPadding(d(16), d(16), d(12), d(16))
             isClickable = true
         }
-        adv.addView(TextView(ctx).apply {
-            text = "🛠️"
-            textSize = 20f
-        })
+        adv.addView(lineIcon(ctx, LineIcons.ADVANCED, teal, 22))
         adv.addView(TextView(ctx).apply {
             text = "Advanced"
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(teal)
-            setPadding(d(12), 0, 0, 0)
+            setPadding(d(14), 0, 0, 0)
         }, lp(0, WRAP, 1f))
-        advArrow = TextView(ctx).apply {
-            text = "⌄"
-            textSize = 20f
-            setTextColor(teal)
-        }
+        advArrow = lineIcon(ctx, LineIcons.DOWN, teal, 20)
         adv.addView(advArrow)
         addTo(col, adv)
 
@@ -208,10 +209,10 @@ class SettingsScreen(
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        val (rFps, vfp) = optionRow("🎬", "Frame rate") { pickFrameRate() }
+        val (rFps, vfp) = optionRow(LineIcons.FORMAT, "Frame rate") { pickFrameRate() }
         vFps = vfp
         addTo(advBox, rFps)
-        val (rAbr, vab) = optionRow("🎚️", "Audio bitrate") { pickAudioBitrate() }
+        val (rAbr, vab) = optionRow(LineIcons.AUDIO, "Audio bitrate") { pickAudioBitrate() }
         vAbr = vab
         addTo(advBox, rAbr)
         val hw = LinearLayout(ctx).apply {
@@ -221,15 +222,12 @@ class SettingsScreen(
             setPadding(d(16), d(16), d(14), d(16))
             alpha = 0.5f
         }
-        hw.addView(TextView(ctx).apply {
-            text = "⚡"
-            textSize = 20f
-        })
+        hw.addView(lineIcon(ctx, LineIcons.BOLT, UI.textSub, 22))
         hw.addView(TextView(ctx).apply {
             text = "Hardware Acceleration"
             textSize = 15f
             setTextColor(UI.textMain)
-            setPadding(d(12), 0, 0, 0)
+            setPadding(d(14), 0, 0, 0)
         }, lp(0, WRAP, 1f))
         hw.addView(TextView(ctx).apply {
             text = "শীঘ্রই আসছে"
@@ -242,7 +240,7 @@ class SettingsScreen(
         adv.setOnClickListener {
             val show = advBox.visibility != View.VISIBLE
             advBox.visibility = if (show) View.VISIBLE else View.GONE
-            advArrow.text = if (show) "⌃" else "⌄"
+            advArrow.setImageDrawable(PathIcon(if (show) LineIcons.UP else LineIcons.DOWN, teal))
         }
 
         val comp = LinearLayout(ctx).apply {
@@ -251,15 +249,12 @@ class SettingsScreen(
             background = UI.cardBg(ctx, UI.card, 14)
             setPadding(d(16), d(12), d(14), d(12))
         }
-        comp.addView(TextView(ctx).apply {
-            text = "🗜️"
-            textSize = 20f
-        })
+        comp.addView(lineIcon(ctx, LineIcons.COMPRESS, UI.textSub, 22))
         comp.addView(TextView(ctx).apply {
             text = "Compress"
             textSize = 15f
             setTextColor(UI.textMain)
-            setPadding(d(12), 0, 0, 0)
+            setPadding(d(14), 0, 0, 0)
         }, lp(0, WRAP, 1f))
         compressSwitch = Switch(ctx).apply {
             val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
@@ -318,6 +313,12 @@ class SettingsScreen(
         return frame
     }
 
+    private fun combinedAudio(): List<TrackInfo> =
+        audioTracks + s.extAudio.map { TrackInfo(it.name, "EXTERNAL") }
+
+    private fun combinedSubs(): List<TrackInfo> =
+        subTracks + s.extSubs.map { TrackInfo(it.name, "EXTERNAL") }
+
     private fun resLabel(): String = when {
         s.resolution == "ORIGINAL" -> if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL"
         s.resolution.startsWith("CUSTOM:") -> s.resolution.substring(7).replace('x', '×')
@@ -343,15 +344,15 @@ class SettingsScreen(
         vProfile.text = s.profile.uppercase()
         vFormat.text = s.format
         vRes.text = resLabel()
-        vSub.text = trackLabel(subTracks, s.subSel)
-        vAudio.text = trackLabel(audioTracks, s.audioSel)
+        vSub.text = trackLabel(combinedSubs(), s.subSel)
+        vAudio.text = trackLabel(combinedAudio(), s.audioSel)
         vFps.text = s.frameRate
         vAbr.text = s.audioBitrate
         updating = true
         compressSwitch.isChecked = s.compress
         updating = false
         compressNote.text = if (s.compress) {
-            "🗜️ চালু: ভিডিওর বিটরেট কমিয়ে ফাইল ছোট করা হবে (আনুমানিক ৩০–৫০% ছোট), অডিও ৯৬K-তে নামবে। কোয়ালিটি সামান্য কমবে, সময় একটু বেশি লাগতে পারে।"
+            "চালু: ভিডিওর বিটরেট কমিয়ে ফাইল ছোট করা হবে (আনুমানিক ৩০–৫০% ছোট), অডিও ৯৬K-তে নামবে। কোয়ালিটি সামান্য কমবে, সময় একটু বেশি লাগতে পারে।"
         } else {
             "বন্ধ: কোয়ালিটি মূলের কাছাকাছি থাকবে, ফাইল বড় হতে পারে।"
         }
@@ -429,15 +430,32 @@ class SettingsScreen(
         val values = ArrayList<String>()
         opts.add(Opt("CUSTOM RESOLUTION", "নিজের মাপ লিখুন"))
         values.add("CUSTOM")
-        opts.add(Opt(if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL", "ORIGINAL"))
-        values.add("ORIGINAL")
-        val shortSide = if (srcW > 0) minOf(srcW, srcH) else Int.MAX_VALUE
-        for (hp in Options.presetHeights) {
-            if (hp < shortSide) {
-                opts.add(Opt("${hp}P", scaledSub(hp)))
-                values.add("${hp}P")
-            }
+
+        val shortSide = if (srcW > 0 && srcH > 0) minOf(srcW, srcH) else 0
+        val origOpt = Opt(if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL", "ORIGINAL")
+        var origAdded = false
+        if (shortSide == 0) {
+            opts.add(origOpt)
+            values.add("ORIGINAL")
+            origAdded = true
         }
+        for (hp in Options.presetHeights) {
+            if (shortSide > 0 && !origAdded && hp <= shortSide) {
+                opts.add(origOpt)
+                values.add("ORIGINAL")
+                origAdded = true
+                if (hp == shortSide) continue
+            }
+            val label = if (hp == 1440) "1440P (2K)" else "${hp}P"
+            val up = if (shortSide > 0 && hp > shortSide) "  • বড় করা হবে" else ""
+            opts.add(Opt(label, scaledSub(hp) + up))
+            values.add("${hp}P")
+        }
+        if (!origAdded) {
+            opts.add(origOpt)
+            values.add("ORIGINAL")
+        }
+
         val sel = values.indexOf(s.resolution)
         Sheets.choice(ctx, "RESOLUTION", opts, sel) { i ->
             val v = values[i]
@@ -459,8 +477,10 @@ class SettingsScreen(
 
     private fun pickSubtitle() {
         Sheets2.tracks(
-            ctx, "SUBTITLE TRACKS", subTracks, s.subSel,
-            "এই ভিডিওতে কোনো সাবটাইটেল নেই"
+            ctx, "SUBTITLE TRACKS", combinedSubs(), s.subSel,
+            "এই ভিডিওতে কোনো সাবটাইটেল নেই",
+            if (single) "+ ADD EXTERNAL SUBTITLE" else null,
+            { addExternal(false) }
         ) { sel ->
             s.subSel = sel
             refresh()
@@ -469,11 +489,62 @@ class SettingsScreen(
 
     private fun pickAudio() {
         Sheets2.tracks(
-            ctx, "AUDIO TRACKS", audioTracks, s.audioSel,
-            "এই ভিডিওতে কোনো অডিও নেই"
+            ctx, "AUDIO TRACKS", combinedAudio(), s.audioSel,
+            "এই ভিডিওতে কোনো অডিও নেই",
+            if (single) "+ ADD EXTERNAL AUDIO" else null,
+            { addExternal(true) }
         ) { sel ->
             s.audioSel = sel
             refresh()
+        }
+    }
+
+    private fun reopen(audio: Boolean) {
+        if (audio) pickAudio() else pickSubtitle()
+    }
+
+    private fun fileNameOf(uri: Uri): String = try {
+        ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (c.moveToFirst() && i >= 0) c.getString(i) else null
+        } ?: "external"
+    } catch (_: Throwable) {
+        "external"
+    }
+
+    // বাহ্যিক সাবটাইটেল / অডিও ফাইল যোগ করা
+    private fun addExternal(audio: Boolean) {
+        pickExternal { uri ->
+            if (uri == null) {
+                reopen(audio)
+            } else {
+                Thread {
+                    val name = fileNameOf(uri)
+                    val r = TrackProbe.probe(ctx, uri)
+                    val probeOk = r != null && (if (audio) r.audio.isNotEmpty() else r.subs.isNotEmpty())
+                    val ext = name.lowercase().substringAfterLast('.', "")
+                    val subExt = setOf("srt", "ass", "ssa", "vtt", "sub", "sbv")
+                    val audExt = setOf("mp3", "aac", "m4a", "wav", "flac", "ogg", "opus", "wma", "ac3", "mka")
+                    val extOk = if (audio) audExt.contains(ext) else subExt.contains(ext)
+                    main.post {
+                        if (!(probeOk || extOk)) {
+                            Toast.makeText(
+                                ctx,
+                                if (audio) "এটি অডিও ফাইল নয়" else "এটি সাবটাইটেল ফাইল নয়",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            val list = if (audio) s.extAudio else s.extSubs
+                            list.add(ExtTrack(uri, name))
+                            val base = if (audio) audioTracks.size else subTracks.size
+                            val idx = base + list.size - 1
+                            if (audio) s.audioSel = s.audioSel + idx else s.subSel = s.subSel + idx
+                            refresh()
+                        }
+                        reopen(audio)
+                    }
+                }.start()
+            }
         }
     }
 
@@ -501,7 +572,7 @@ class SettingsScreen(
             .setMessage(
                 "• Profile: তৈরি সেটিং এক চাপে বসায়\n" +
                 "• Format ও Resolution: আউটপুটের ধরন ও সাইজ\n" +
-                "• Audio/Subtitle tracks: কোন ট্র্যাক রাখবেন, টিক দিয়ে বাছুন\n" +
+                "• Audio/Subtitle tracks: টিক দিয়ে বাছুন, বাইরের ফাইলও যোগ করা যায়\n" +
                 "• Compress: ফাইল ছোট করে\n" +
                 "• CONVERT চেপে নাম দিয়ে শুরু করুন বা কিউতে রাখুন"
             )
