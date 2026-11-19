@@ -2,7 +2,7 @@ package com.example.videostudio
 
 import android.net.Uri
 
-data class Opt(val label: String, val sub: String = "")
+data class Opt(val label: String, val sub: String = "", val tag: String = "")
 
 data class ExtTrack(val uri: Uri, val name: String)
 
