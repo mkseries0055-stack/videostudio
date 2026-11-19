@@ -33,6 +33,9 @@ class SettingsScreen(
 
     private var audioTracks: List<TrackInfo> = emptyList()
     private var subTracks: List<TrackInfo> = emptyList()
+    private var probed = false
+    private var srcW = 0
+    private var srcH = 0
     private var updating = false
 
     private lateinit var vProfile: TextView
@@ -43,6 +46,7 @@ class SettingsScreen(
     private lateinit var vFps: TextView
     private lateinit var vAbr: TextView
     private lateinit var compressSwitch: Switch
+    private lateinit var compressNote: TextView
     private lateinit var note: TextView
     private lateinit var advBox: LinearLayout
     private lateinit var advArrow: TextView
@@ -50,6 +54,14 @@ class SettingsScreen(
     val root: View = build()
 
     init {
+        if (items.size > 1) {
+            val pseudo = listOf(TrackInfo("DEFAULT", "প্রতিটি ভিডিওর প্রথম ট্র্যাক"))
+            audioTracks = pseudo
+            subTracks = pseudo
+            probed = true
+        }
+        s.audioSel = setOf(0)
+        s.subSel = setOf(0)
         refresh()
         if (items.size == 1) probeTracks()
     }
@@ -131,7 +143,6 @@ class SettingsScreen(
             setPadding(d(16), d(4), d(16), d(130))
         }
 
-        // ফাইলের তথ্য
         val total = items.sumOf { it.size }
         val infoText = if (items.size == 1) {
             "🎬  " + items[0].name + "\n" + fmtSize(items[0].size)
@@ -159,19 +170,14 @@ class SettingsScreen(
         vRes = vr
         addTo(col, rRes)
 
-        val (rSub, vs) = optionRow("💬", "Subtitle tracks") {
-            pickTrack("SUBTITLE TRACKS", subTracks, s.subtitleMode) { s.subtitleMode = it }
-        }
+        val (rSub, vs) = optionRow("💬", "Subtitle tracks") { pickSubtitle() }
         vSub = vs
         addTo(col, rSub)
 
-        val (rAudio, va) = optionRow("🔊", "Audio tracks") {
-            pickTrack("AUDIO TRACKS", audioTracks, s.audioMode) { s.audioMode = it }
-        }
+        val (rAudio, va) = optionRow("🔊", "Audio tracks") { pickAudio() }
         vAudio = va
         addTo(col, rAudio)
 
-        // Advanced
         val adv = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -239,7 +245,6 @@ class SettingsScreen(
             advArrow.text = if (show) "⌃" else "⌄"
         }
 
-        // Compress
         val comp = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -271,10 +276,17 @@ class SettingsScreen(
         comp.addView(compressSwitch)
         addTo(col, comp)
 
+        compressNote = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(UI.textSub)
+            setPadding(d(4), d(8), d(4), 0)
+        }
+        col.addView(compressNote)
+
         note = TextView(ctx).apply {
             textSize = 12f
             setTextColor(UI.textSub)
-            setPadding(d(4), d(12), d(4), 0)
+            setPadding(d(4), d(10), d(4), 0)
         }
         col.addView(note)
 
@@ -282,7 +294,6 @@ class SettingsScreen(
         page.addView(scroll, lp(MATCH, 0, 1f))
         frame.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        // গোল CONVERT বাটন
         val fab = TextView(ctx).apply {
             text = "CONVERT"
             textSize = 12f
@@ -307,12 +318,17 @@ class SettingsScreen(
         return frame
     }
 
-    private fun modeLabel(mode: String, tracks: List<TrackInfo>, kind: String): String {
-        if (mode.startsWith("TRACK:")) {
-            val i = mode.substring(6).toIntOrNull() ?: 0
-            return tracks.getOrNull(i)?.short ?: (kind + " " + (i + 1))
-        }
-        return mode
+    private fun resLabel(): String = when {
+        s.resolution == "ORIGINAL" -> if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL"
+        s.resolution.startsWith("CUSTOM:") -> s.resolution.substring(7).replace('x', '×')
+        else -> s.resolution
+    }
+
+    private fun trackLabel(tracks: List<TrackInfo>, sel: Set<Int>): String {
+        if (!probed) return "..."
+        if (tracks.isEmpty() || sel.isEmpty()) return "NONE"
+        if (sel.size == 1) return tracks.getOrNull(sel.first())?.short ?: "DEFAULT"
+        return "${sel.size} TRACKS"
     }
 
     private fun formatNote(): String = when (s.format) {
@@ -326,14 +342,19 @@ class SettingsScreen(
     private fun refresh() {
         vProfile.text = s.profile.uppercase()
         vFormat.text = s.format
-        vRes.text = s.resolution
-        vSub.text = modeLabel(s.subtitleMode, subTracks, "SUBTITLE")
-        vAudio.text = modeLabel(s.audioMode, audioTracks, "AUDIO")
+        vRes.text = resLabel()
+        vSub.text = trackLabel(subTracks, s.subSel)
+        vAudio.text = trackLabel(audioTracks, s.audioSel)
         vFps.text = s.frameRate
         vAbr.text = s.audioBitrate
         updating = true
         compressSwitch.isChecked = s.compress
         updating = false
+        compressNote.text = if (s.compress) {
+            "🗜️ চালু: ভিডিওর বিটরেট কমিয়ে ফাইল ছোট করা হবে (আনুমানিক ৩০–৫০% ছোট), অডিও ৯৬K-তে নামবে। কোয়ালিটি সামান্য কমবে, সময় একটু বেশি লাগতে পারে।"
+        } else {
+            "বন্ধ: কোয়ালিটি মূলের কাছাকাছি থাকবে, ফাইল বড় হতে পারে।"
+        }
         val n = formatNote()
         note.text = n
         note.visibility = if (n.isEmpty()) View.GONE else View.VISIBLE
@@ -341,13 +362,21 @@ class SettingsScreen(
 
     private fun probeTracks() {
         Thread {
+            val dims = TrackProbe.dims(ctx, items[0].uri)
             val r = TrackProbe.probe(ctx, items[0].uri)
-            if (r != null) {
-                main.post {
+            main.post {
+                if (dims != null) {
+                    srcW = dims.first
+                    srcH = dims.second
+                }
+                if (r != null) {
                     audioTracks = r.audio
                     subTracks = r.subs
-                    refresh()
+                    s.audioSel = if (r.audio.isEmpty()) emptySet() else setOf(0)
+                    s.subSel = if (r.subs.isEmpty()) emptySet() else setOf(0)
                 }
+                probed = true
+                refresh()
             }
         }.start()
     }
@@ -370,32 +399,80 @@ class SettingsScreen(
         }
     }
 
+    private fun scaledSub(heightP: Int): String {
+        if (srcW <= 0 || srcH <= 0) return ""
+        val w: Int
+        val h: Int
+        if (srcW >= srcH) {
+            h = heightP
+            w = Math.round(srcW.toFloat() * heightP / srcH) / 2 * 2
+        } else {
+            w = heightP
+            h = Math.round(srcH.toFloat() * heightP / srcW) / 2 * 2
+        }
+        return "${w}×${h}"
+    }
+
     private fun pickResolution() {
-        val sub = if (s.format == "3GP") "H.263 সাপোর্টেড সাইজ" else ""
-        val list = Options.resolutionsFor(s.format).map { Opt(it, sub) }
-        val sel = list.indexOfFirst { it.label == s.resolution }.coerceAtLeast(0)
-        Sheets.choice(ctx, "RESOLUTION", list, sel) { i ->
-            s.resolution = list[i].label
-            s.profile = "NONE"
+        if (s.format == "3GP") {
+            val list = Options.keypadRes.map { Opt(it, "H.263 সাপোর্টেড সাইজ") }
+            val sel = list.indexOfFirst { it.label == s.resolution }
+            Sheets.choice(ctx, "RESOLUTION", list, sel) { i ->
+                s.resolution = list[i].label
+                s.profile = "NONE"
+                refresh()
+            }
+            return
+        }
+
+        val opts = ArrayList<Opt>()
+        val values = ArrayList<String>()
+        opts.add(Opt("CUSTOM RESOLUTION", "নিজের মাপ লিখুন"))
+        values.add("CUSTOM")
+        opts.add(Opt(if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL", "ORIGINAL"))
+        values.add("ORIGINAL")
+        val shortSide = if (srcW > 0) minOf(srcW, srcH) else Int.MAX_VALUE
+        for (hp in Options.presetHeights) {
+            if (hp < shortSide) {
+                opts.add(Opt("${hp}P", scaledSub(hp)))
+                values.add("${hp}P")
+            }
+        }
+        val sel = values.indexOf(s.resolution)
+        Sheets.choice(ctx, "RESOLUTION", opts, sel) { i ->
+            val v = values[i]
+            if (v == "CUSTOM") {
+                val iw = if (srcW > 0) srcW else 1280
+                val ih = if (srcH > 0) srcH else 720
+                Sheets2.customResolution(ctx, iw, ih) { w, h ->
+                    s.resolution = "CUSTOM:${w}x${h}"
+                    s.profile = "NONE"
+                    refresh()
+                }
+            } else {
+                s.resolution = v
+                s.profile = "NONE"
+                refresh()
+            }
+        }
+    }
+
+    private fun pickSubtitle() {
+        Sheets2.tracks(
+            ctx, "SUBTITLE TRACKS", subTracks, s.subSel,
+            "এই ভিডিওতে কোনো সাবটাইটেল নেই"
+        ) { sel ->
+            s.subSel = sel
             refresh()
         }
     }
 
-    private fun pickTrack(
-        title: String,
-        tracks: List<TrackInfo>,
-        current: String,
-        onSet: (String) -> Unit
-    ) {
-        val opts = ArrayList<Opt>(Options.basicModes)
-        val values = ArrayList<String>(listOf("DEFAULT", "ALL", "NONE"))
-        tracks.forEachIndexed { i, t ->
-            opts.add(Opt(t.short, t.detail))
-            values.add("TRACK:$i")
-        }
-        val sel = values.indexOf(current).coerceAtLeast(0)
-        Sheets.choice(ctx, title, opts, sel) { i ->
-            onSet(values[i])
+    private fun pickAudio() {
+        Sheets2.tracks(
+            ctx, "AUDIO TRACKS", audioTracks, s.audioSel,
+            "এই ভিডিওতে কোনো অডিও নেই"
+        ) { sel ->
+            s.audioSel = sel
             refresh()
         }
     }
@@ -424,7 +501,7 @@ class SettingsScreen(
             .setMessage(
                 "• Profile: তৈরি সেটিং এক চাপে বসায়\n" +
                 "• Format ও Resolution: আউটপুটের ধরন ও সাইজ\n" +
-                "• Audio/Subtitle tracks: কোন ট্র্যাক রাখবেন\n" +
+                "• Audio/Subtitle tracks: কোন ট্র্যাক রাখবেন, টিক দিয়ে বাছুন\n" +
                 "• Compress: ফাইল ছোট করে\n" +
                 "• CONVERT চেপে নাম দিয়ে শুরু করুন বা কিউতে রাখুন"
             )
