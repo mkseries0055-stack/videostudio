@@ -52,15 +52,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var outNav: NavItem
     private lateinit var homeView: View
     private lateinit var outView: View
+    private var queueBar: TextView? = null
 
     private var tab = 0
     private var mode = 0 // 0 = লাইট, 1 = ডার্ক, 2 = অটো
 
     private var picker: PickerScreen? = null
     private var settings: SettingsScreen? = null
+    private var progress: ProgressScreen? = null
     private val convertSettings = ConvertSettings()
     private var selectedVideos: List<VideoItem> = emptyList()
     private var pendingExternal: ((Uri?) -> Unit)? = null
+    private var wasActive = false
+
+    private val queueListener: () -> Unit = { runOnUiThread { updateQueueBar() } }
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -134,14 +139,77 @@ class MainActivity : AppCompatActivity() {
         if (p != null) setContentView(p.root) else buildUi()
     }
 
+    private fun outputNameFor(st: ConvertSettings, item: VideoItem, index: Int, single: Boolean): String {
+        val orig = item.name.substringBeforeLast('.', item.name)
+        return if (single) {
+            if (st.outputName.isBlank()) orig else st.outputName
+        } else {
+            if (st.useOriginalName) orig else st.prefix + (index + 1)
+        }
+    }
+
     private fun onConvertRequested(list: List<VideoItem>, startNow: Boolean) {
         val st = convertSettings
-        val what = if (startNow) "শুরু হবে" else "কিউতে যোগ হয়েছে"
-        Toast.makeText(
-            this,
-            "${list.size} টি ভিডিও • ${st.format} • ${st.resolution} — $what (প্রগ্রেস পেজ পরের ধাপে আসছে)",
-            Toast.LENGTH_LONG
-        ).show()
+        val single = list.size == 1
+        val specs = list.mapIndexed { i, item ->
+            JobSpec(
+                single,
+                st.format,
+                st.resolution,
+                st.frameRate,
+                st.audioBitrate,
+                st.compress,
+                st.keepMetadata,
+                st.audioSel.toSet(),
+                st.subSel.toSet(),
+                st.extAudio.toList(),
+                st.extSubs.toList(),
+                outputNameFor(st, item, i, single)
+            )
+        }
+        QueueManager.add(this, list, specs)
+        settings = null
+        picker = null
+        if (startNow) {
+            showProgress()
+        } else {
+            buildUi()
+            Toast.makeText(this, "${list.size} টি ভিডিও কিউতে যোগ হয়েছে — কনভার্ট চলছে", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showProgress() {
+        progress?.close()
+        val p = ProgressScreen(this) { closeProgress() }
+        progress = p
+        setContentView(p.root)
+    }
+
+    private fun closeProgress() {
+        progress?.close()
+        progress = null
+        buildUi()
+    }
+
+    private fun updateQueueBar() {
+        val active = QueueManager.hasActive()
+        if (wasActive && !active && progress == null) {
+            val ok = QueueManager.jobs.count { it.state == QueueManager.DONE }
+            val bad = QueueManager.jobs.count { it.state == QueueManager.FAILED }
+            Toast.makeText(this, "কনভার্ট শেষ — সফল $ok, ব্যর্থ $bad", Toast.LENGTH_LONG).show()
+        }
+        wasActive = active
+        val bar = queueBar ?: return
+        if (active && progress == null) {
+            val total = QueueManager.jobs.size
+            val finished = QueueManager.jobs.count {
+                it.state != QueueManager.WAITING && it.state != QueueManager.RUNNING
+            }
+            bar.text = "●  Running " + minOf(finished + 1, total) + "/" + total + " — tap to view"
+            bar.visibility = View.VISIBLE
+        } else {
+            bar.visibility = View.GONE
+        }
     }
 
     private fun systemDark(): Boolean =
@@ -178,6 +246,23 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(UI.bg)
         }
+
+        val qb = TextView(this).apply {
+            textSize = 13f
+            setTextColor(android.graphics.Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setBackgroundColor(UI.blue)
+            setPadding(0, UI.dp(this@MainActivity, 10), 0, UI.dp(this@MainActivity, 10))
+            visibility = View.GONE
+            setOnClickListener { showProgress() }
+        }
+        queueBar = qb
+        root.addView(
+            qb,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        )
+
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -215,15 +300,22 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
         select(tab)
+        updateQueueBar()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mode = getSharedPreferences("app", MODE_PRIVATE).getInt("theme", 0)
         tab = savedInstanceState?.getInt("tab", 0) ?: 0
+        wasActive = QueueManager.hasActive()
+        QueueManager.addListener(queueListener)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (progress != null) {
+                    closeProgress()
+                    return
+                }
                 if (settings != null) {
                     showPicker()
                     return
@@ -239,6 +331,12 @@ class MainActivity : AppCompatActivity() {
         })
 
         buildUi()
+    }
+
+    override fun onDestroy() {
+        QueueManager.removeListener(queueListener)
+        progress?.close()
+        super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
