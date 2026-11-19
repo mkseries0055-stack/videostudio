@@ -3,11 +3,13 @@ package com.example.videostudio
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -18,9 +20,36 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : AppCompatActivity() {
 
+    private inner class NavItem(path: String, label: String) {
+        private val icon = PathIcon(path, UI.textSub)
+        private val tv = TextView(this@MainActivity).apply {
+            text = label
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setPadding(0, UI.dp(this@MainActivity, 2), 0, 0)
+        }
+        val root = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(0, UI.dp(this@MainActivity, 8), 0, UI.dp(this@MainActivity, 8))
+            val iv = ImageView(this@MainActivity).apply { setImageDrawable(icon) }
+            addView(
+                iv,
+                LinearLayout.LayoutParams(UI.dp(this@MainActivity, 24), UI.dp(this@MainActivity, 24))
+            )
+            addView(tv)
+        }
+
+        fun setActive(on: Boolean) {
+            val c = if (on) UI.blue else UI.textSub
+            icon.setColor(c)
+            tv.setTextColor(c)
+        }
+    }
+
     private lateinit var content: FrameLayout
-    private lateinit var homeTab: TextView
-    private lateinit var outTab: TextView
+    private lateinit var homeNav: NavItem
+    private lateinit var outNav: NavItem
     private lateinit var homeView: View
     private lateinit var outView: View
 
@@ -31,6 +60,7 @@ class MainActivity : AppCompatActivity() {
     private var settings: SettingsScreen? = null
     private val convertSettings = ConvertSettings()
     private var selectedVideos: List<VideoItem> = emptyList()
+    private var pendingExternal: ((Uri?) -> Unit)? = null
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -41,6 +71,13 @@ class MainActivity : AppCompatActivity() {
     private val browseLauncher =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (!uris.isNullOrEmpty()) picker?.addExternal(uris)
+        }
+
+    private val externalLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val cb = pendingExternal
+            pendingExternal = null
+            cb?.invoke(uri)
         }
 
     private fun videoPermission(): String =
@@ -80,6 +117,10 @@ class MainActivity : AppCompatActivity() {
             this,
             list,
             convertSettings,
+            pickExternal = { cb ->
+                pendingExternal = cb
+                externalLauncher.launch(arrayOf("*/*"))
+            },
             onBack = { showPicker() },
             onDone = { startNow -> onConvertRequested(list, startNow) }
         )
@@ -115,19 +156,12 @@ class MainActivity : AppCompatActivity() {
         buildUi()
     }
 
-    private fun navItem(emoji: String, label: String): TextView = TextView(this).apply {
-        text = "$emoji\n$label"
-        textSize = 12f
-        gravity = Gravity.CENTER
-        setPadding(0, UI.dp(this@MainActivity, 8), 0, UI.dp(this@MainActivity, 8))
-    }
-
     private fun select(index: Int) {
         tab = index
         content.removeAllViews()
         content.addView(if (index == 0) homeView else outView)
-        homeTab.setTextColor(if (index == 0) UI.blue else UI.textSub)
-        outTab.setTextColor(if (index == 1) UI.blue else UI.textSub)
+        homeNav.setActive(index == 0)
+        outNav.setActive(index == 1)
     }
 
     private fun buildUi() {
@@ -167,17 +201,17 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(UI.card)
         }
-        homeTab = navItem("🏠", "Home")
-        outTab = navItem("📁", "Output Files")
-        bar.addView(homeTab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(outTab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        homeNav = NavItem(LineIcons.HOME, "Home")
+        outNav = NavItem(LineIcons.FOLDER, "Output Files")
+        bar.addView(homeNav.root, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(outNav.root, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(
             bar,
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         )
 
-        homeTab.setOnClickListener { select(0) }
-        outTab.setOnClickListener { select(1) }
+        homeNav.root.setOnClickListener { select(0) }
+        outNav.root.setOnClickListener { select(1) }
 
         setContentView(root)
         select(tab)
