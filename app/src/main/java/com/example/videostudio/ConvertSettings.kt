@@ -1,13 +1,19 @@
 package com.example.videostudio
 
+import android.net.Uri
+
 data class Opt(val label: String, val sub: String = "")
+
+data class ExtTrack(val uri: Uri, val name: String)
 
 class ConvertSettings {
     var profile = "NONE"
     var format = "ORIGINAL"
     var resolution = "ORIGINAL"    // ORIGINAL, 720P, CUSTOM:854x480, 176×144
-    var audioSel: Set<Int> = setOf(0)   // খালি মানে NONE
+    var audioSel: Set<Int> = setOf(0)   // খালি মানে NONE (ইনডেক্স: ভেতরের ট্র্যাক, তারপর বাহ্যিক)
     var subSel: Set<Int> = setOf(0)
+    val extAudio = ArrayList<ExtTrack>()
+    val extSubs = ArrayList<ExtTrack>()
     var audioMode = "DEFAULT"      // পুরোনো, এখন ব্যবহার হয় না
     var subtitleMode = "DEFAULT"   // পুরোনো, এখন ব্যবহার হয় না
     var frameRate = "ORIGINAL"
@@ -42,7 +48,7 @@ object Options {
     )
 
     val keypadRes = listOf("176×144", "352×288", "128×96")
-    val presetHeights = listOf(1080, 720, 480, 360, 240)
+    val presetHeights = listOf(1440, 1080, 960, 720, 640, 480, 360, 320, 240, 144)
     val frameRates = listOf("ORIGINAL", "30", "25", "24", "15")
     val audioBitrates = listOf("AUTO", "64K", "96K", "128K", "192K")
 
