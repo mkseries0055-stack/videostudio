@@ -319,6 +319,14 @@ class SettingsScreen(
     private fun combinedSubs(): List<TrackInfo> =
         subTracks + s.extSubs.map { TrackInfo(it.name, "EXTERNAL") }
 
+    // ORIGINAL হলে আসল ফরম্যাটের নাম (যেমন MP4) দেখানো
+    private fun formatLabel(): String =
+        if (s.format == "ORIGINAL") {
+            if (single) Containers.fromName(items[0].name) else "ORIGINAL"
+        } else {
+            s.format
+        }
+
     private fun resLabel(): String = when {
         s.resolution == "ORIGINAL" -> if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL"
         s.resolution.startsWith("CUSTOM:") -> s.resolution.substring(7).replace('x', '×')
@@ -342,7 +350,7 @@ class SettingsScreen(
 
     private fun refresh() {
         vProfile.text = s.profile.uppercase()
-        vFormat.text = s.format
+        vFormat.text = formatLabel()
         vRes.text = resLabel()
         vSub.text = trackLabel(combinedSubs(), s.subSel)
         vAudio.text = trackLabel(combinedAudio(), s.audioSel)
@@ -385,17 +393,31 @@ class SettingsScreen(
     private fun pickProfile() {
         val opts = Options.profiles
         val sel = opts.indexOfFirst { it.label == s.profile }.coerceAtLeast(0)
-        Sheets.choice(ctx, "CONVERSION PROFILE", opts, sel) { i ->
+        Sheets3.choice(ctx, "CONVERSION PROFILE", opts, sel) { i ->
             Options.applyProfile(s, opts[i].label)
             refresh()
         }
     }
 
     private fun pickFormat() {
-        val opts = Options.formats
-        val sel = opts.indexOfFirst { it.label == s.format }.coerceAtLeast(0)
-        Sheets.choice(ctx, "FORMAT", opts, sel) { i ->
-            Options.setFormat(s, opts[i].label)
+        val srcFmt = if (single) Containers.fromName(items[0].name) else ""
+        val opts = ArrayList<Opt>()
+        val values = ArrayList<String>()
+        if (single) {
+            val sub = Options.formats.firstOrNull { it.label == srcFmt }?.sub ?: ""
+            opts.add(Opt(srcFmt, sub, "ORIGINAL"))
+        } else {
+            opts.add(Opt("ORIGINAL", "প্রতিটি ভিডিওর মূল ফরম্যাট"))
+        }
+        values.add("ORIGINAL")
+        for (o in Options.formats) {
+            if (o.label == "ORIGINAL" || o.label == srcFmt) continue
+            opts.add(o)
+            values.add(o.label)
+        }
+        val sel = if (s.format == "ORIGINAL" || s.format == srcFmt) 0 else values.indexOf(s.format)
+        Sheets3.choice(ctx, "FORMAT", opts, sel) { i ->
+            Options.setFormat(s, values[i])
             refresh()
         }
     }
@@ -418,7 +440,7 @@ class SettingsScreen(
         if (s.format == "3GP") {
             val list = Options.keypadRes.map { Opt(it, "H.263 সাপোর্টেড সাইজ") }
             val sel = list.indexOfFirst { it.label == s.resolution }
-            Sheets.choice(ctx, "RESOLUTION", list, sel) { i ->
+            Sheets3.choice(ctx, "RESOLUTION", list, sel) { i ->
                 s.resolution = list[i].label
                 s.profile = "NONE"
                 refresh()
@@ -432,7 +454,7 @@ class SettingsScreen(
         values.add("CUSTOM")
 
         val shortSide = if (srcW > 0 && srcH > 0) minOf(srcW, srcH) else 0
-        val origOpt = Opt(if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL", "ORIGINAL")
+        val origOpt = Opt(if (srcW > 0) "${srcW}×${srcH}" else "ORIGINAL", "", "ORIGINAL")
         var origAdded = false
         if (shortSide == 0) {
             opts.add(origOpt)
@@ -457,7 +479,7 @@ class SettingsScreen(
         }
 
         val sel = values.indexOf(s.resolution)
-        Sheets.choice(ctx, "RESOLUTION", opts, sel) { i ->
+        Sheets3.choice(ctx, "RESOLUTION", opts, sel) { i ->
             val v = values[i]
             if (v == "CUSTOM") {
                 val iw = if (srcW > 0) srcW else 1280
@@ -551,7 +573,7 @@ class SettingsScreen(
     private fun pickFrameRate() {
         val list = Options.frameRates.map { Opt(it) }
         val sel = list.indexOfFirst { it.label == s.frameRate }.coerceAtLeast(0)
-        Sheets.choice(ctx, "FRAME RATE", list, sel) { i ->
+        Sheets3.choice(ctx, "FRAME RATE", list, sel) { i ->
             s.frameRate = list[i].label
             refresh()
         }
@@ -560,7 +582,7 @@ class SettingsScreen(
     private fun pickAudioBitrate() {
         val list = Options.audioBitrates.map { Opt(it) }
         val sel = list.indexOfFirst { it.label == s.audioBitrate }.coerceAtLeast(0)
-        Sheets.choice(ctx, "AUDIO BITRATE", list, sel) { i ->
+        Sheets3.choice(ctx, "AUDIO BITRATE", list, sel) { i ->
             s.audioBitrate = list[i].label
             refresh()
         }
