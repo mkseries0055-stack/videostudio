@@ -73,6 +73,9 @@ class MainActivity : AppCompatActivity() {
             else Toast.makeText(this, "ভিডিও দেখাতে অনুমতি দরকার", Toast.LENGTH_SHORT).show()
         }
 
+    private val notifLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     private val browseLauncher =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (!uris.isNullOrEmpty()) picker?.addExternal(uris)
@@ -88,6 +91,14 @@ class MainActivity : AppCompatActivity() {
     private fun videoPermission(): String =
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO
         else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private fun askNotifPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     private fun startPicker() {
         if (checkSelfPermission(videoPermission()) == PackageManager.PERMISSION_GRANTED) {
@@ -167,7 +178,9 @@ class MainActivity : AppCompatActivity() {
                 outputNameFor(st, item, i, single)
             )
         }
+        askNotifPermission()
         QueueManager.add(this, list, specs)
+        ConvertService.start(this)
         settings = null
         picker = null
         if (startNow) {
