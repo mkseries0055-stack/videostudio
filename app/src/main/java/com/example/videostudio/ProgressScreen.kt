@@ -343,13 +343,15 @@ class ProgressScreen(
             return Pair(colL, tv)
         }
 
+        val mime = if (job.audio != null) "audio/*" else "video/*"
+
         val (playCol, _) = act(Ic.PLAY, "PLAY", UI.blue, UI.textMain) {
             val u = job.outUri
             if (u != null) {
                 try {
                     ctx.startActivity(
                         Intent(Intent.ACTION_VIEW)
-                            .setDataAndType(u, "video/*")
+                            .setDataAndType(u, mime)
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     )
                 } catch (_: Throwable) {
@@ -362,7 +364,7 @@ class ProgressScreen(
             if (u != null) {
                 try {
                     val send = Intent(Intent.ACTION_SEND)
-                        .setType("video/*")
+                        .setType(mime)
                         .putExtra(Intent.EXTRA_STREAM, u)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     ctx.startActivity(Intent.createChooser(send, "Share"))
@@ -386,8 +388,13 @@ class ProgressScreen(
         val j = c.job
         val s = j.state
         c.info.text = if (j.info.isNotEmpty()) j.info else {
-            j.spec.format + "  •  " + j.spec.resolution.replace("CUSTOM:", "").replace('x', '×') +
-                (if (j.spec.compress) "  •  Compress" else "")
+            val au = j.audio
+            if (au != null) {
+                AudioPlanner.label(au)
+            } else {
+                j.spec.format + "  •  " + j.spec.resolution.replace("CUSTOM:", "").replace('x', '×') +
+                    (if (j.spec.compress) "  •  Compress" else "")
+            }
         }
 
         val barColor = when (s) {
@@ -441,7 +448,7 @@ class ProgressScreen(
             c.result.visibility = View.VISIBLE
             var t = "Original " + fmtSize(j.item.size) + "  →  Output " + fmtSize(j.outSize)
             if (j.outRes.isNotEmpty()) t += "  •  " + j.outRes
-            t += "\nMovies/VideoStudio/" + j.outName
+            t += "\n" + j.outDir + "/" + j.outName
             if (j.note.isNotEmpty()) t += "\n" + j.note
             val gone = OriginalState.deleted.contains(j.id)
             if (gone) t += "\nমূল ফাইল মুছে ফেলা হয়েছে"
