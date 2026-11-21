@@ -59,7 +59,9 @@ class MainActivity : AppCompatActivity() {
 
     private var picker: PickerScreen? = null
     private var settings: SettingsScreen? = null
+    private var audioScreen: AudioSettingsScreen? = null
     private var progress: ProgressScreen? = null
+    private var audioMode = false
     private val convertSettings = ConvertSettings()
     private var selectedVideos: List<VideoItem> = emptyList()
     private var pendingExternal: ((Uri?) -> Unit)? = null
@@ -100,7 +102,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startPicker() {
+    private fun startPicker(audio: Boolean) {
+        audioMode = audio
         if (checkSelfPermission(videoPermission()) == PackageManager.PERMISSION_GRANTED) {
             openPicker()
         } else {
@@ -112,7 +115,9 @@ class MainActivity : AppCompatActivity() {
         val p = PickerScreen(
             this,
             onBack = { closePicker() },
-            onNext = { list -> openSettings(list) },
+            onNext = { list ->
+                if (audioMode) openAudioSettings(list) else openSettings(list)
+            },
             onBrowse = { browseLauncher.launch(arrayOf("*/*")) }
         )
         picker = p
@@ -122,6 +127,7 @@ class MainActivity : AppCompatActivity() {
     private fun closePicker() {
         picker = null
         settings = null
+        audioScreen = null
         buildUi()
     }
 
@@ -144,8 +150,21 @@ class MainActivity : AppCompatActivity() {
         setContentView(sc.root)
     }
 
+    private fun openAudioSettings(list: List<VideoItem>) {
+        selectedVideos = list
+        val sc = AudioSettingsScreen(
+            this,
+            list,
+            onBack = { showPicker() },
+            onDone = { a, names, startNow -> onAudioConvertRequested(list, a, names, startNow) }
+        )
+        audioScreen = sc
+        setContentView(sc.root)
+    }
+
     private fun showPicker() {
         settings = null
+        audioScreen = null
         val p = picker
         if (p != null) setContentView(p.root) else buildUi()
     }
@@ -156,6 +175,18 @@ class MainActivity : AppCompatActivity() {
             if (st.outputName.isBlank()) orig else st.outputName
         } else {
             if (st.useOriginalName) orig else st.prefix + (index + 1)
+        }
+    }
+
+    private fun afterQueued(startNow: Boolean, count: Int) {
+        settings = null
+        audioScreen = null
+        picker = null
+        if (startNow) {
+            showProgress()
+        } else {
+            buildUi()
+            Toast.makeText(this, "$count টি ভিডিও কিউতে যোগ হয়েছে — কনভার্ট চলছে", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -181,14 +212,44 @@ class MainActivity : AppCompatActivity() {
         askNotifPermission()
         QueueManager.add(this, list, specs)
         ConvertService.start(this)
-        settings = null
-        picker = null
-        if (startNow) {
-            showProgress()
-        } else {
-            buildUi()
-            Toast.makeText(this, "${list.size} টি ভিডিও কিউতে যোগ হয়েছে — কনভার্ট চলছে", Toast.LENGTH_LONG).show()
+        afterQueued(startNow, list.size)
+    }
+
+    private fun onAudioConvertRequested(
+        list: List<VideoItem>,
+        a: AudioSettings,
+        names: ConvertSettings,
+        startNow: Boolean
+    ) {
+        val single = list.size == 1
+        val specs = list.mapIndexed { i, item ->
+            JobSpec(
+                single,
+                "ORIGINAL",
+                "ORIGINAL",
+                "ORIGINAL",
+                "AUTO",
+                false,
+                names.keepMetadata,
+                emptySet(),
+                emptySet(),
+                emptyList(),
+                emptyList(),
+                outputNameFor(names, item, i, single)
+            )
         }
+        val audioSpec = AudioSpec(
+            a.format,
+            a.bitrate,
+            a.sampleRate,
+            a.channels,
+            if (single) a.track else 0,
+            names.keepMetadata
+        )
+        askNotifPermission()
+        QueueManager.add(this, list, specs, audioSpec)
+        ConvertService.start(this)
+        afterQueued(startNow, list.size)
     }
 
     private fun showProgress() {
@@ -280,10 +341,10 @@ class MainActivity : AppCompatActivity() {
         root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         homeView = buildHome(this, mode, { m -> setMode(m) }) { name ->
-            if (name == "Convert or Compress") {
-                startPicker()
-            } else {
-                Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
+            when (name) {
+                "Convert or Compress" -> startPicker(false)
+                "Video To Audio" -> startPicker(true)
+                else -> Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
             }
         }
         outView = buildOutput(this)
@@ -329,7 +390,7 @@ class MainActivity : AppCompatActivity() {
                     closeProgress()
                     return
                 }
-                if (settings != null) {
+                if (settings != null || audioScreen != null) {
                     showPicker()
                     return
                 }
