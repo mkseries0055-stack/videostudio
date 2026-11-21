@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.LinearLayout
@@ -17,7 +18,17 @@ object Sheets3 {
     private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
-    // নিচ থেকে উঠে আসা তালিকা, নামের পাশে নীল ট্যাগ (যেমন ORIGINAL) সহ
+    private fun hasBengali(s: String): Boolean = s.any { it in '\u0980'..'\u09FF' }
+
+    // বাংলা অংশ বাদ দিয়ে শুধু ইংরেজি সাব-টেক্সট রাখা; নামের সাথে একই হলে বাদ
+    private fun cleanSub(label: String, sub: String): String {
+        if (sub.isEmpty()) return ""
+        val parts = sub.split("•").map { it.trim() }.filter { it.isNotEmpty() && !hasBengali(it) }
+        val joined = parts.joinToString("  •  ")
+        return if (joined.equals(label, ignoreCase = true)) "" else joined
+    }
+
+    // নিচ থেকে উঠে আসা তালিকা: সারির মাঝে লাইন, নামের পাশে নীল ট্যাগ (যেমন ORIGINAL)
     fun choice(
         ctx: Context,
         title: String,
@@ -28,6 +39,7 @@ object Sheets3 {
         val d = { v: Int -> UI.dp(ctx, v) }
         val dlg = Dialog(ctx)
         dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val lineColor = if (UI.dark) Color.parseColor("#3A3D45") else Color.parseColor("#D1D5DB")
 
         val r = d(22).toFloat()
         val box = LinearLayout(ctx).apply {
@@ -43,15 +55,17 @@ object Sheets3 {
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(UI.blue)
-            setPadding(d(22), 0, d(22), d(8))
+            setPadding(d(22), 0, d(22), d(10))
         })
 
         val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         options.forEachIndexed { i, o ->
+            val sub = cleanSub(o.label, o.sub)
+
             val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(d(22), d(13), d(22), d(13))
+                setPadding(d(22), d(15), d(22), d(15))
                 isClickable = true
                 setOnClickListener {
                     dlg.dismiss()
@@ -80,11 +94,12 @@ object Sheets3 {
             }
             col.addView(labelRow)
 
-            if (o.sub.isNotEmpty()) {
+            if (sub.isNotEmpty()) {
                 col.addView(TextView(ctx).apply {
-                    text = o.sub
+                    text = sub
                     textSize = 12f
                     setTextColor(UI.textSub)
+                    setPadding(0, d(2), 0, 0)
                 })
             }
             row.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f))
@@ -97,6 +112,12 @@ object Sheets3 {
                 })
             }
             list.addView(row)
+
+            if (i < options.size - 1) {
+                val line = View(ctx)
+                line.setBackgroundColor(lineColor)
+                list.addView(line, LinearLayout.LayoutParams(MATCH, d(1)))
+            }
         }
 
         val maxH = (ctx.resources.displayMetrics.heightPixels * 0.62f).toInt()
