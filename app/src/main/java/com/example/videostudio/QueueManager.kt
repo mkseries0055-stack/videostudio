@@ -13,7 +13,12 @@ import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 
-class Job(val id: Long, val item: VideoItem, val spec: JobSpec) {
+class Job(
+    val id: Long,
+    val item: VideoItem,
+    val spec: JobSpec,
+    val audio: AudioSpec? = null
+) {
     @Volatile var state = QueueManager.WAITING
     @Volatile var progress = 0f
     @Volatile var sessionId = -1L
@@ -21,6 +26,7 @@ class Job(val id: Long, val item: VideoItem, val spec: JobSpec) {
     @Volatile var outUri: Uri? = null
     @Volatile var outDeleted = false
     var outName = ""
+    var outDir = ""
     var outSize = 0L
     var outRes = ""
     var info = ""
@@ -63,10 +69,10 @@ object QueueManager {
     fun hasActive(): Boolean = jobs.any { it.state == WAITING || it.state == RUNNING }
 
     @Synchronized
-    fun add(ctx: Context, items: List<VideoItem>, specs: List<JobSpec>) {
+    fun add(ctx: Context, items: List<VideoItem>, specs: List<JobSpec>, audio: AudioSpec? = null) {
         if (!hasActive()) jobs.clear()
         for (i in items.indices) {
-            jobs.add(Job(nextId, items[i], specs[i]))
+            jobs.add(Job(nextId, items[i], specs[i], audio))
             nextId++
         }
         startWorker(ctx.applicationContext)
@@ -121,7 +127,7 @@ object QueueManager {
                     j.state = RUNNING
                     notifyChange()
                     try {
-                        runJob(app, j)
+                        if (j.audio != null) runAudioJob(app, j) else runJob(app, j)
                     } catch (e: Throwable) {
                         j.state = FAILED
                         j.error = e.toString()
@@ -193,7 +199,7 @@ object QueueManager {
 
     private fun displayName(app: Context, uri: Uri): String? = try {
         app.contentResolver.query(
-            uri, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null
+            uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null
         )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     } catch (_: Throwable) {
         null
@@ -217,10 +223,116 @@ object QueueManager {
         val done = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
         resolver.update(uri, done, null, null)
         job.outUri = uri
+        job.outDir = "Movies/VideoStudio"
         job.outSize = file.length()
         job.outName = displayName(app, uri) ?: (base + "." + Containers.ext(fmt))
         val d = TrackProbe.dims(app, uri)
         job.outRes = if (d != null) "${d.first}×${d.second}" else ""
+    }
+
+    private fun saveAudio(app: Context, job: Job, file: File, fmt: String) {
+        val resolver = app.contentResolver
+        val orig = job.item.name.substringBeforeLast('.', job.item.name)
+        val base = safeName(if (job.spec.outName.isBlank()) orig else job.spec.outName)
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, base + "." + AudioOptions.ext(fmt))
+            put(MediaStore.Audio.Media.MIME_TYPE, AudioOptions.mime(fmt))
+            put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/VideoStudio")
+            put(MediaStore.Audio.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw RuntimeException("আউটপুট ফাইল তৈরি করা যায়নি")
+        resolver.openOutputStream(uri)!!.use { o ->
+            file.inputStream().use { it.copyTo(o) }
+        }
+        val done = ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }
+        resolver.update(uri, done, null, null)
+        job.outUri = uri
+        job.outDir = "Music/VideoStudio"
+        job.outSize = file.length()
+        job.outName = displayName(app, uri) ?: (base + "." + AudioOptions.ext(fmt))
+        job.outRes = ""
+    }
+
+    private fun runAudioJob(app: Context, job: Job) {
+        val temps = ArrayList<File>()
+        var pfd: ParcelFileDescriptor? = null
+        try {
+            if (job.cancelRequested) {
+                job.state = CANCELLED
+                return
+            }
+            val a = job.audio!!
+            val item = job.item
+
+            var dur = item.durationMs
+            if (dur <= 0) dur = durationOf(app, item.uri)
+            curTotal = dur
+            job.progress = 0f
+            job.info = AudioPlanner.label(a)
+            job.outDir = "Music/VideoStudio"
+
+            val outFile = File(
+                app.cacheDir,
+                "aout_${job.id}_${System.nanoTime()}." + AudioOptions.ext(a.format)
+            )
+            temps.add(outFile)
+
+            val started = System.currentTimeMillis()
+            var ok = false
+            var log = ""
+            pfd = try {
+                app.contentResolver.openFileDescriptor(item.uri, "r")
+            } catch (_: Throwable) {
+                null
+            }
+            val fdNow = pfd
+            if (fdNow != null) {
+                val r = execute(job, AudioPlanner.build(a, "/proc/self/fd/" + fdNow.fd, outFile.absolutePath))
+                ok = r.first
+                log = r.second
+            }
+
+            if (!ok && !job.cancelRequested &&
+                (fdNow == null || System.currentTimeMillis() - started < 10000)
+            ) {
+                try { pfd?.close() } catch (_: Throwable) {}
+                pfd = null
+                val inFile = copyToCache(app, item.uri, "in${job.id}", extOf(item.name), job, temps)
+                outFile.delete()
+                val r = execute(job, AudioPlanner.build(a, inFile.absolutePath, outFile.absolutePath))
+                ok = r.first
+                log = r.second
+            }
+
+            if (job.cancelRequested) {
+                job.state = CANCELLED
+                return
+            }
+            if (!ok || !outFile.exists() || outFile.length() <= 0L) {
+                job.state = FAILED
+                job.error = log.takeLast(500)
+                return
+            }
+
+            job.progress = 1f
+            saveAudio(app, job, outFile, a.format)
+            job.state = DONE
+        } catch (e: CancelledException) {
+            job.state = CANCELLED
+        } catch (t: Throwable) {
+            if (job.cancelRequested) {
+                job.state = CANCELLED
+            } else {
+                job.state = FAILED
+                job.error = t.toString()
+            }
+        } finally {
+            try { pfd?.close() } catch (_: Throwable) {}
+            for (f in temps) {
+                try { f.delete() } catch (_: Throwable) {}
+            }
+        }
     }
 
     private fun runJob(app: Context, job: Job) {
@@ -315,7 +427,6 @@ object QueueManager {
                 log = r.second
             }
 
-            // সরাসরি পড়া না গেলে ফাইল কপি করে আবার চেষ্টা
             if (!ok && !job.cancelRequested &&
                 (fdNow == null || System.currentTimeMillis() - started < 10000)
             ) {
