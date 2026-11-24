@@ -1,5 +1,7 @@
 package com.example.videostudio
 
+import java.util.Locale
+
 data class JobSpec(
     val single: Boolean,
     val format: String,
@@ -12,7 +14,12 @@ data class JobSpec(
     val subSel: Set<Int>,
     val extAudio: List<ExtTrack>,
     val extSubs: List<ExtTrack>,
-    val outName: String
+    val outName: String,
+    val cutStartMs: Long = -1L,
+    val cutEndMs: Long = -1L,
+    val removeSelected: Boolean = false,
+    val fastCut: Boolean = false,
+    val totalMs: Long = 0L
 )
 
 object Containers {
@@ -82,6 +89,31 @@ class Plan(
 object Planner {
     private val TEXT_SUBS = setOf("ASS", "SSA", "SUBRIP", "SRT", "MOV_TEXT", "WEBVTT", "TEXT")
 
+    private fun sec(ms: Long): String = String.format(Locale.US, "%.3f", ms / 1000.0)
+
+    private fun resolveRes(spec: JobSpec, fmt: String): String =
+        if (fmt == "3GP" && !spec.resolution.contains("×")) "176×144" else spec.resolution
+
+    private fun buildVf(res: String): List<String> {
+        val vf = ArrayList<String>()
+        if (res.startsWith("CUSTOM:")) {
+            val wh = res.substring(7).split("x")
+            if (wh.size == 2) vf.add("scale=" + wh[0] + ":" + wh[1])
+        } else if (res.contains("×")) {
+            val wh = res.split("×")
+            val w = wh[0]
+            val h = wh[1]
+            vf.add("scale=$w:$h:force_original_aspect_ratio=decrease")
+            vf.add("pad=$w:$h:(ow-iw)/2:(oh-ih)/2")
+        } else if (res.endsWith("P")) {
+            val hp = res.dropLast(1).toIntOrNull()
+            if (hp != null) {
+                vf.add("scale=if(gt(iw\\,ih)\\,-2\\,$hp):if(gt(iw\\,ih)\\,$hp\\,-2)")
+            }
+        }
+        return vf
+    }
+
     fun build(
         spec: JobSpec,
         sourceName: String,
@@ -93,12 +125,42 @@ object Planner {
         outPath: String
     ): Plan {
         val fmt = if (spec.format == "ORIGINAL") Containers.fromName(sourceName) else spec.format
-        val copyMode = spec.format == "ORIGINAL" && spec.resolution == "ORIGINAL" &&
-            spec.frameRate == "ORIGINAL" && !spec.compress && spec.audioBitrate == "AUTO"
         val mp4Family = fmt == "MP4" || fmt == "M4V" || fmt == "MOV"
+
+        // কাটার হিসাব
+        val hasCut = spec.cutStartMs >= 0L && spec.cutEndMs > spec.cutStartMs
+        val fast = hasCut && spec.fastCut
+        var keepStart = -1L
+        var keepDur = -1L
+        var concat = false
+        if (hasCut) {
+            if (!spec.removeSelected) {
+                keepStart = spec.cutStartMs
+                keepDur = spec.cutEndMs - spec.cutStartMs
+            } else if (spec.cutStartMs <= 0L) {
+                keepStart = spec.cutEndMs
+            } else if (spec.totalMs > 0L && spec.cutEndMs >= spec.totalMs) {
+                keepStart = 0L
+                keepDur = spec.cutStartMs
+            } else {
+                concat = true
+            }
+        }
+
+        val copyMode = fast || (!hasCut && spec.format == "ORIGINAL" &&
+            spec.resolution == "ORIGINAL" && spec.frameRate == "ORIGINAL" &&
+            !spec.compress && spec.audioBitrate == "AUTO")
 
         val a = ArrayList<String>()
         a.add("-y")
+        if (keepStart >= 0L) {
+            a.add("-ss")
+            a.add(sec(keepStart))
+        }
+        if (keepDur > 0L) {
+            a.add("-t")
+            a.add(sec(keepDur))
+        }
         a.add("-i")
         a.add(mainInput)
 
@@ -118,46 +180,81 @@ object Planner {
             next++
         }
 
-        // ভিডিও ও অডিও ট্র্যাক
-        a.add("-map")
-        a.add("0:v:0?")
-        for (i in embA) {
+        val res = resolveRes(spec, fmt)
+        val vf = if (copyMode) emptyList() else buildVf(res)
+
+        if (concat) {
+            // বাছা অংশ বাদ দিয়ে বাকি দুই অংশ জোড়া
+            val s = sec(spec.cutStartMs)
+            val e = sec(spec.cutEndMs)
+            val hasAudio = embA.isNotEmpty()
+            val ai = if (hasAudio) embA[0] else 0
+            val g = StringBuilder()
+            g.append("[0:v:0]trim=start=0:end=$s,setpts=PTS-STARTPTS[v0];")
+            g.append("[0:v:0]trim=start=$e,setpts=PTS-STARTPTS[v1];")
+            if (hasAudio) {
+                g.append("[0:a:$ai]atrim=start=0:end=$s,asetpts=PTS-STARTPTS[a0];")
+                g.append("[0:a:$ai]atrim=start=$e,asetpts=PTS-STARTPTS[a1];")
+                g.append("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vc][ac]")
+            } else {
+                g.append("[v0][v1]concat=n=2:v=1:a=0[vc]")
+            }
+            var vOut = "vc"
+            if (vf.isNotEmpty()) {
+                g.append(";[vc]" + vf.joinToString(",") + "[vo]")
+                vOut = "vo"
+            }
+            a.add("-filter_complex")
+            a.add(g.toString())
             a.add("-map")
-            a.add("0:a:$i?")
-        }
-        for (k in audioIdx) {
+            a.add("[$vOut]")
+            if (hasAudio) {
+                a.add("-map")
+                a.add("[ac]")
+            }
+        } else {
             a.add("-map")
-            a.add("$k:a:0")
+            a.add("0:v:0?")
+            for (i in embA) {
+                a.add("-map")
+                a.add("0:a:$i?")
+            }
+            for (k in audioIdx) {
+                a.add("-map")
+                a.add("$k:a:0")
+            }
         }
 
         // সাবটাইটেল ট্র্যাক
         val subOpts = ArrayList<String>()
         var dropped = false
-        var j = 0
-        if (fmt == "MKV" || mp4Family) {
-            for (pair in embS) {
-                val i = pair.first
-                val codec = pair.second
-                if (mp4Family && !TEXT_SUBS.contains(codec)) {
-                    dropped = true
-                    continue
+        if (!concat) {
+            var j = 0
+            if (fmt == "MKV" || mp4Family) {
+                for (pair in embS) {
+                    val i = pair.first
+                    val codec = pair.second
+                    if (mp4Family && !TEXT_SUBS.contains(codec)) {
+                        dropped = true
+                        continue
+                    }
+                    a.add("-map")
+                    a.add("0:s:$i?")
+                    val c = if (mp4Family) "mov_text" else if (codec == "MOV_TEXT") "srt" else "copy"
+                    subOpts.add("-c:s:$j")
+                    subOpts.add(c)
+                    j++
                 }
-                a.add("-map")
-                a.add("0:s:$i?")
-                val c = if (mp4Family) "mov_text" else if (codec == "MOV_TEXT") "srt" else "copy"
-                subOpts.add("-c:s:$j")
-                subOpts.add(c)
-                j++
+                for (k in subIdx) {
+                    a.add("-map")
+                    a.add("$k:s:0")
+                    subOpts.add("-c:s:$j")
+                    subOpts.add(if (mp4Family) "mov_text" else "copy")
+                    j++
+                }
+            } else if (embS.isNotEmpty() || extS.isNotEmpty()) {
+                dropped = true
             }
-            for (k in subIdx) {
-                a.add("-map")
-                a.add("$k:s:0")
-                subOpts.add("-c:s:$j")
-                subOpts.add(if (mp4Family) "mov_text" else "copy")
-                j++
-            }
-        } else if (embS.isNotEmpty() || extS.isNotEmpty()) {
-            dropped = true
         }
 
         if (!spec.keepMetadata) {
@@ -173,26 +270,12 @@ object Planner {
             a.add("copy")
             a.add("-c:a")
             a.add("copy")
-        } else {
-            // রেজোলিউশন
-            val vf = ArrayList<String>()
-            val res = if (fmt == "3GP" && !spec.resolution.contains("×")) "176×144" else spec.resolution
-            if (res.startsWith("CUSTOM:")) {
-                val wh = res.substring(7).split("x")
-                if (wh.size == 2) vf.add("scale=" + wh[0] + ":" + wh[1])
-            } else if (res.contains("×")) {
-                val wh = res.split("×")
-                val w = wh[0]
-                val h = wh[1]
-                vf.add("scale=$w:$h:force_original_aspect_ratio=decrease")
-                vf.add("pad=$w:$h:(ow-iw)/2:(oh-ih)/2")
-            } else if (res.endsWith("P")) {
-                val hp = res.dropLast(1).toIntOrNull()
-                if (hp != null) {
-                    vf.add("scale=if(gt(iw\\,ih)\\,-2\\,$hp):if(gt(iw\\,ih)\\,$hp\\,-2)")
-                }
+            if (fast) {
+                a.add("-avoid_negative_ts")
+                a.add("make_zero")
             }
-            if (vf.isNotEmpty()) {
+        } else {
+            if (!concat && vf.isNotEmpty()) {
                 a.add("-vf")
                 a.add(vf.joinToString(","))
             }
