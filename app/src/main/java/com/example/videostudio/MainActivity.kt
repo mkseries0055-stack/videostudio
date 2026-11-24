@@ -60,8 +60,10 @@ class MainActivity : AppCompatActivity() {
     private var picker: PickerScreen? = null
     private var settings: SettingsScreen? = null
     private var audioScreen: AudioSettingsScreen? = null
+    private var cutter: CutterScreen? = null
     private var progress: ProgressScreen? = null
     private var audioMode = false
+    private var cutMode = false
     private val convertSettings = ConvertSettings()
     private var selectedVideos: List<VideoItem> = emptyList()
     private var pendingExternal: ((Uri?) -> Unit)? = null
@@ -102,8 +104,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startPicker(audio: Boolean) {
+    private fun startPicker(audio: Boolean, cut: Boolean = false) {
         audioMode = audio
+        cutMode = cut
         if (checkSelfPermission(videoPermission()) == PackageManager.PERMISSION_GRANTED) {
             openPicker()
         } else {
@@ -116,7 +119,17 @@ class MainActivity : AppCompatActivity() {
             this,
             onBack = { closePicker() },
             onNext = { list ->
-                if (audioMode) openAudioSettings(list) else openSettings(list)
+                if (cutMode) {
+                    if (list.size != 1) {
+                        Toast.makeText(this, "কাটার জন্য একটি ভিডিও বাছুন", Toast.LENGTH_SHORT).show()
+                    } else {
+                        openCutter(list[0])
+                    }
+                } else if (audioMode) {
+                    openAudioSettings(list)
+                } else {
+                    openSettings(list)
+                }
             },
             onBrowse = { browseLauncher.launch(arrayOf("*/*")) }
         )
@@ -124,10 +137,16 @@ class MainActivity : AppCompatActivity() {
         setContentView(p.root)
     }
 
+    private fun releaseCutter() {
+        cutter?.release()
+        cutter = null
+    }
+
     private fun closePicker() {
         picker = null
         settings = null
         audioScreen = null
+        releaseCutter()
         buildUi()
     }
 
@@ -162,9 +181,26 @@ class MainActivity : AppCompatActivity() {
         setContentView(sc.root)
     }
 
+    private fun openCutter(item: VideoItem) {
+        val c = CutterScreen(
+            this,
+            item,
+            onBack = { showPicker() },
+            onSave = { spec, jobItem, startNow ->
+                askNotifPermission()
+                QueueManager.add(this, listOf(jobItem), listOf(spec))
+                ConvertService.start(this)
+                afterQueued(startNow, 1)
+            }
+        )
+        cutter = c
+        setContentView(c.root)
+    }
+
     private fun showPicker() {
         settings = null
         audioScreen = null
+        releaseCutter()
         val p = picker
         if (p != null) setContentView(p.root) else buildUi()
     }
@@ -181,6 +217,7 @@ class MainActivity : AppCompatActivity() {
     private fun afterQueued(startNow: Boolean, count: Int) {
         settings = null
         audioScreen = null
+        releaseCutter()
         picker = null
         if (startNow) {
             showProgress()
@@ -344,6 +381,7 @@ class MainActivity : AppCompatActivity() {
             when (name) {
                 "Convert or Compress" -> startPicker(false)
                 "Video To Audio" -> startPicker(true)
+                "Video Cutter" -> startPicker(false, true)
                 else -> Toast.makeText(this, "$name — শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
             }
         }
@@ -390,7 +428,7 @@ class MainActivity : AppCompatActivity() {
                     closeProgress()
                     return
                 }
-                if (settings != null || audioScreen != null) {
+                if (settings != null || audioScreen != null || cutter != null) {
                     showPicker()
                     return
                 }
@@ -407,9 +445,15 @@ class MainActivity : AppCompatActivity() {
         buildUi()
     }
 
+    override fun onPause() {
+        cutter?.pause()
+        super.onPause()
+    }
+
     override fun onDestroy() {
         QueueManager.removeListener(queueListener)
         progress?.close()
+        cutter?.release()
         super.onDestroy()
     }
 
